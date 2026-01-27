@@ -206,6 +206,7 @@ export default function Home() {
   // Swipe support refs
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
+  const saveTimer = useRef(null);
 
   // ----- Derived -----
   const selectedTasks = tasksByDate[selectedKey] ?? [];
