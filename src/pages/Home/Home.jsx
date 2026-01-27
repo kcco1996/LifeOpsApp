@@ -594,6 +594,8 @@ export default function Home() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-purple">Life Ops</h1>
 
+        <div className="text-xs opacity-60">BUILD: 2026-01-27-A</div>
+
         <div className="mt-2 space-y-2">
           <div
             className="text-sm opacity-80 flex items-center justify-between gap-2"
