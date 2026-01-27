@@ -521,11 +521,9 @@ setTimeout(() => {
     };
   }, [user, authLoading]);
 
-
-    // ----- Save on change (AFTER hydration) -----
+// ----- Save on change (AFTER hydration) -----
 useEffect(() => {
   if (!hydrated) return;
-
 
   const payload = {
     tasksByDate,
@@ -552,29 +550,12 @@ useEffect(() => {
   // Always save locally immediately (fast + offline safe)
   saveAppData(payload);
 
-  // If this render was caused by applying Firestore -> do NOT write back
-if (skipNextCloudSave.current) {
-  skipNextCloudSave.current = false;
-  return;
-}
+  // ✅ If this update came from Firestore applying -> do not write back
+  if (!user) return;
+  if (applyingRemote.current) return;
 
-const json = JSON.stringify(payload);
-if (json === lastSavedJSON.current) return;
-lastSavedJSON.current = json;
-
-  // 🔥 Debounced Firestore save
-  if (user && !applyingRemote.current) {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-
-    saveTimer.current = setTimeout(() => {
-      saveCloudState(user.uid, payload);
-    }, 800); // wait 800ms after last change
-  }
-
-  // Cleanup if component rerenders quickly
-  return () => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-  };
+  // ✅ Let lifeOpsCloud.js debounce + dedupe
+  saveCloudState(user.uid, payload);
 }, [
   hydrated,
   user,
@@ -599,8 +580,6 @@ lastSavedJSON.current = json;
   nextMatch,
   upcomingItems,
 ]);
-
-
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
   useEffect(() => {

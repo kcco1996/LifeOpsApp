@@ -30,11 +30,61 @@ export async function loadCloudState(uid) {
   return snap.exists() ? snap.data() : null;
 }
 
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+
+  if (Array.isArray(value)) {
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+
+  const keys = Object.keys(value).sort();
+  return (
+    "{" +
+    keys
+      .map((k) => JSON.stringify(k) + ":" + stableStringify(value[k]))
+      .join(",") +
+    "}"
+  );
+}
+
+function hashState(state) {
+  try {
+    return stableStringify(state);
+  } catch {
+    return String(Date.now());
+  }
+}
+
+
 /**
  * Debounced + deduped save.
  * Call this as often as you want; it will write at most ~1 per delay window,
  * and only when the data has changed since last successful save.
  */
+export function resetCloudSaveQueue() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  pendingUid = null;
+  pendingState = null;
+}
+
+export async function migrateLocalToCloud(uid, localState) {
+  if (!uid) throw new Error("Missing uid");
+
+  await setDoc(
+    refFor(uid),
+    {
+      ...localState,
+      migratedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  // Seed hash so you don't immediately re-save the same payload after migrating
+  lastSavedHashByUid.set(uid, hashState(localState));
+}
+
 export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
   // If we recently hit quota, don't keep hammering Firestore.
   if (Date.now() < cloudWriteDisabledUntil) return;
@@ -44,6 +94,7 @@ export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
 
   // If unchanged vs last successful save, skip completely.
   if (lastHash && lastHash === nextHash) return;
+  
 
   // Queue latest payload
   pendingUid = uid;
@@ -117,3 +168,5 @@ export function getCloudWriteStatus() {
     lastError: lastCloudWriteError,
   };
 }
+
+ 
