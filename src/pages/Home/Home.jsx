@@ -1,8 +1,8 @@
 // src/pages/Home/Home.jsx (complete)
-// ✅ localStorage persistence (loadAppData/saveAppData)
-// ✅ hydration guard
-// ✅ Firebase live sync when signed in
-// ✅ manual "Migrate local → Firebase" button for certainty
+// ✅ Persists everything via loadAppData/saveAppData (localStorage)
+// ✅ Hydration guard prevents overwriting saved data on refresh
+// ✅ Saves EVERYTHING that gets loaded (including weeklyChecklist + showWeeklyChecklist)
+// ✅ Upcoming add/edit/delete persists reliably
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -23,7 +23,7 @@ import {
   subscribeCloudState,
   saveCloudState,
   loadCloudState,
-  migrateLocalToCloud, // ✅ add this in lifeOpsCloud.js (see bottom of message)
+  migrateLocalToCloud,
 } from "../../data/storage/lifeOpsCloud";
 
 import { loadAppData, saveAppData } from "../../data/storage/localStorage";
@@ -73,7 +73,7 @@ function formatLabel(key) {
 // ISO week key: "YYYY-Www"
 function isoWeekKeyFromDate(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
+  const dayNum = d.getUTCDay() || 7; // 1..7
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const year = d.getUTCFullYear();
   const yearStart = new Date(Date.UTC(year, 0, 1));
@@ -136,18 +136,15 @@ function safeId() {
   return globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.floor(Math.random() * 1000));
 }
 
+// -------------------- Home --------------------
 export default function Home() {
-  const { user, authLoading } = useAuth();
+   const { user, authLoading } = useAuth();
 
   // prevents “cloud snapshot -> setState -> save -> overwrite cloud” loops
   const applyingRemote = useRef(false);
 
   // one-time migration: if cloud is empty but local has data, upload it once
   const migratedOnce = useRef(false);
-
-  // used to ignore duplicate snapshots
-  const lastCloudJSON = useRef("");
-
   function defaultDayTypeFor(key) {
     const d = keyToDate(key);
     const dow = d.getDay(); // 0 Sun ... 6 Sat
@@ -158,6 +155,11 @@ export default function Home() {
     return "Rest day";
   }
 
+  const lastCloudJSON = useRef("");
+const skipNextCloudSave = useRef(false);
+const lastSavedJSON = useRef("");
+const skipCloudSavesFor = useRef(0);
+
   // ----- Per-day storage -----
   const [tasksByDate, setTasksByDate] = useState({});
   const [promptByDate, setPromptByDate] = useState({});
@@ -167,7 +169,7 @@ export default function Home() {
   const [copingDoneByDate, setCopingDoneByDate] = useState({});
   const [copingPickByDate, setCopingPickByDate] = useState({});
   const [supportShownByDate, setSupportShownByDate] = useState({});
-  const [quickCheckByDate, setQuickCheckByDate] = useState({});
+  const [quickCheckByDate, setQuickCheckByDate] = useState({}); // { "YYYY-MM-DD": { energy, focus, stress } }
 
   // ----- Per-status plans -----
   const [supportPlanByStatus, setSupportPlanByStatus] = useState({ green: "", amber: "", red: "" });
@@ -206,12 +208,13 @@ export default function Home() {
     notes: "",
   });
 
-  // ✅ hydration guard
+  // ✅ hydration guard (prevents overwriting saved data on mount)
   const [hydrated, setHydrated] = useState(false);
 
   // Swipe support refs
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
+  const saveTimer = useRef(null);
 
   // ----- Derived -----
   const selectedTasks = tasksByDate[selectedKey] ?? [];
@@ -222,6 +225,7 @@ export default function Home() {
   const isRed = selectedStatus === "red";
   const isReduced = uiMode === "reduced";
   const isBare = uiMode === "bare";
+
   const showExtras = !isBare && (!isRed || !isReduced);
 
   const dailyPrompt = promptForStatus(selectedStatus);
@@ -390,6 +394,7 @@ export default function Home() {
     setUpcomingEditorOpen(true);
   }
 
+  // ✅ hardened: always treats prev as an array
   function saveUpcomingDraft() {
     const cleaned = {
       type: (upcomingDraft.type || "other").trim(),
@@ -403,8 +408,15 @@ export default function Home() {
 
     setUpcomingItems((prev) => {
       const list = Array.isArray(prev) ? prev : [];
-      if (upcomingEditId) return list.map((x) => (x.id === upcomingEditId ? { ...x, ...cleaned } : x));
-      return [{ id: safeId(), ...cleaned, createdAt: Date.now() }, ...list];
+
+      if (upcomingEditId) {
+        return list.map((x) => (x.id === upcomingEditId ? { ...x, ...cleaned } : x));
+      }
+
+      return [
+        { id: safeId(), ...cleaned, createdAt: Date.now() },
+        ...list,
+      ];
     });
 
     setUpcomingEditorOpen(false);
@@ -415,39 +427,40 @@ export default function Home() {
     setUpcomingItems((prev) => (Array.isArray(prev) ? prev.filter((x) => x.id !== id) : []));
   }
 
-  // ----- Load & Sync -----
+    // ----- Load & Sync -----
   useEffect(() => {
     if (authLoading) return;
 
+    // Helper: apply a saved object to state (shared by local + cloud)
     function applySaved(saved) {
       if (!saved) return;
 
-      // ignore metadata fields
-      const { updatedAt, migratedAt, ...rest } = saved;
+      const { updatedAt, ...clean } = saved;
+saved = clean;
 
-      if (rest.tasksByDate) setTasksByDate(rest.tasksByDate);
-      if (rest.promptByDate) setPromptByDate(rest.promptByDate);
-      if (rest.statusByDate) setStatusByDate(rest.statusByDate);
-      if (rest.supportPlanByStatus) setSupportPlanByStatus(rest.supportPlanByStatus);
-      if (rest.dayTypeByDate) setDayTypeByDate(rest.dayTypeByDate);
-      if (rest.prepDoneByDate) setPrepDoneByDate(rest.prepDoneByDate);
-      if (rest.copingDoneByDate) setCopingDoneByDate(rest.copingDoneByDate);
-      if (rest.copingPickByDate) setCopingPickByDate(rest.copingPickByDate);
-      if (rest.supportShownByDate) setSupportShownByDate(rest.supportShownByDate);
-      if (rest.quickCheckByDate) setQuickCheckByDate(rest.quickCheckByDate);
+      if (saved.tasksByDate) setTasksByDate(saved.tasksByDate);
+      if (saved.promptByDate) setPromptByDate(saved.promptByDate);
+      if (saved.statusByDate) setStatusByDate(saved.statusByDate);
+      if (saved.supportPlanByStatus) setSupportPlanByStatus(saved.supportPlanByStatus);
+      if (saved.dayTypeByDate) setDayTypeByDate(saved.dayTypeByDate);
+      if (saved.prepDoneByDate) setPrepDoneByDate(saved.prepDoneByDate);
+      if (saved.copingDoneByDate) setCopingDoneByDate(saved.copingDoneByDate);
+      if (saved.copingPickByDate) setCopingPickByDate(saved.copingPickByDate);
+      if (saved.supportShownByDate) setSupportShownByDate(saved.supportShownByDate);
+      if (saved.quickCheckByDate) setQuickCheckByDate(saved.quickCheckByDate);
 
-      if (rest.weeklyByWeekKey) setWeeklyByWeekKey(rest.weeklyByWeekKey);
-      if (rest.weeklyChecklistByWeekKey) setWeeklyChecklistByWeekKey(rest.weeklyChecklistByWeekKey);
-      if (rest.weeklyReviewByWeekKey) setWeeklyReviewByWeekKey(rest.weeklyReviewByWeekKey);
-      if (typeof rest.showWeeklyChecklist === "boolean") setShowWeeklyChecklist(rest.showWeeklyChecklist);
+      if (saved.weeklyByWeekKey) setWeeklyByWeekKey(saved.weeklyByWeekKey);
+      if (saved.weeklyChecklistByWeekKey) setWeeklyChecklistByWeekKey(saved.weeklyChecklistByWeekKey);
+      if (saved.weeklyReviewByWeekKey) setWeeklyReviewByWeekKey(saved.weeklyReviewByWeekKey);
+      if (typeof saved.showWeeklyChecklist === "boolean") setShowWeeklyChecklist(saved.showWeeklyChecklist);
 
-      if (rest.nextTrip) setNextTrip(rest.nextTrip);
-      if (rest.nextMatch) setNextMatch(rest.nextMatch);
+      if (saved.nextTrip) setNextTrip(saved.nextTrip);
+      if (saved.nextMatch) setNextMatch(saved.nextMatch);
 
-      if (rest.upcomingItems) setUpcomingItems(rest.upcomingItems);
+      if (saved.upcomingItems) setUpcomingItems(saved.upcomingItems);
     }
 
-    // Local-only mode
+    // If not signed in -> behave exactly like before (localStorage)
     if (!user) {
       const saved = loadAppData() ?? {};
       applySaved(saved);
@@ -455,55 +468,57 @@ export default function Home() {
       return;
     }
 
-    // Signed in -> Firestore source of truth
+    // Signed in -> Firestore is source of truth (live sync)
     let unsub = null;
 
     (async () => {
+      // 1) Try to load cloud once (so we can decide migration)
       const cloud = await loadCloudState(user.uid);
+
+      // 2) Load local as a fallback (for first time sign-in)
       const local = loadAppData() ?? {};
 
+      // If cloud empty and local has something meaningful, migrate once
       const localHasData =
-        local &&
-        (
-          (Array.isArray(local.upcomingItems) && local.upcomingItems.length > 0) ||
-          (local.tasksByDate && Object.keys(local.tasksByDate).length > 0) ||
-          (local.weeklyByWeekKey && Object.keys(local.weeklyByWeekKey).length > 0) ||
-          (local.weeklyChecklistByWeekKey && Object.keys(local.weeklyChecklistByWeekKey).length > 0) ||
-          (local.weeklyReviewByWeekKey && Object.keys(local.weeklyReviewByWeekKey).length > 0) ||
-          (local.promptByDate && Object.keys(local.promptByDate).length > 0)
-        );
+  local &&
+  (
+    (local.upcomingItems && local.upcomingItems.length) ||
+    (local.tasksByDate && Object.keys(local.tasksByDate).length) ||
+    (local.weeklyByWeekKey && Object.keys(local.weeklyByWeekKey).length)
+  );
 
-      // auto-migrate once if cloud empty
       if (!cloud && localHasData && !migratedOnce.current) {
         migratedOnce.current = true;
         await saveCloudState(user.uid, local);
       }
 
-      // apply cloud preferred
-      applyingRemote.current = true;
-      applySaved(cloud || local);
-      setTimeout(() => {
-        applyingRemote.current = false;
-      }, 0);
+      // Apply whichever exists (cloud preferred)
+ applyingRemote.current = true;
+skipCloudSavesFor.current = 3; // skip next ~3 renders caused by applySaved
+applySaved(cloud || local);
+setTimeout(() => {
+  applyingRemote.current = false;
+}, 0);
 
       setHydrated(true);
 
-      // subscribe to cloud updates
-      unsub = subscribeCloudState(user.uid, (nextCloud) => {
-        if (!nextCloud) return;
+      // 3) Subscribe to live updates (phone <-> computer sync)
+unsub = subscribeCloudState(user.uid, (nextCloud) => {
+  if (!nextCloud) return;
 
-        const { updatedAt, migratedAt, ...rest } = nextCloud;
-        const json = JSON.stringify(rest);
+  const { updatedAt, ...rest } = nextCloud;
+  const json = JSON.stringify(rest);
 
-        if (json === lastCloudJSON.current) return;
-        lastCloudJSON.current = json;
+  if (json === lastCloudJSON.current) return;
+  lastCloudJSON.current = json;
 
-        applyingRemote.current = true;
-        applySaved(rest);
-        setTimeout(() => {
-          applyingRemote.current = false;
-        }, 0);
-      });
+ applyingRemote.current = true;
+skipCloudSavesFor.current = 3;
+applySaved(rest);
+setTimeout(() => {
+  applyingRemote.current = false;
+}, 0);
+});
     })();
 
     return () => {
@@ -511,42 +526,11 @@ export default function Home() {
     };
   }, [user, authLoading]);
 
-  // ----- Save on change (AFTER hydration) -----
-  useEffect(() => {
-    if (!hydrated) return;
+// ----- Save on change (AFTER hydration) -----
+useEffect(() => {
+  if (!hydrated) return;
 
-    const payload = {
-      tasksByDate,
-      promptByDate,
-      statusByDate,
-      supportPlanByStatus,
-      dayTypeByDate,
-      prepDoneByDate,
-      copingDoneByDate,
-      copingPickByDate,
-      supportShownByDate,
-      quickCheckByDate,
-
-      weeklyByWeekKey,
-      weeklyChecklistByWeekKey,
-      weeklyReviewByWeekKey,
-      showWeeklyChecklist,
-
-      nextTrip,
-      nextMatch,
-      upcomingItems,
-    };
-
-    saveAppData(payload);
-
-    if (!user) return;
-    if (applyingRemote.current) return;
-
-    saveCloudState(user.uid, payload);
-  }, [
-    hydrated,
-    user,
-
+  const payload = {
     tasksByDate,
     promptByDate,
     statusByDate,
@@ -566,7 +550,41 @@ export default function Home() {
     nextTrip,
     nextMatch,
     upcomingItems,
-  ]);
+  };
+
+  // Always save locally immediately (fast + offline safe)
+  saveAppData(payload);
+
+  // ✅ If this update came from Firestore applying -> do not write back
+  if (!user) return;
+  if (applyingRemote.current) return;
+
+  // ✅ Let lifeOpsCloud.js debounce + dedupe
+  saveCloudState(user.uid, payload);
+}, [
+  hydrated,
+  user,
+
+  tasksByDate,
+  promptByDate,
+  statusByDate,
+  supportPlanByStatus,
+  dayTypeByDate,
+  prepDoneByDate,
+  copingDoneByDate,
+  copingPickByDate,
+  supportShownByDate,
+  quickCheckByDate,
+
+  weeklyByWeekKey,
+  weeklyChecklistByWeekKey,
+  weeklyReviewByWeekKey,
+  showWeeklyChecklist,
+
+  nextTrip,
+  nextMatch,
+  upcomingItems,
+]);
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
   useEffect(() => {
@@ -595,35 +613,34 @@ export default function Home() {
     return () => clearInterval(id);
   }, [today]);
 
-
-    // -------------------- UI --------------------
+  // -------------------- UI --------------------
   return (
     <div className="max-w-md p-4 space-y-4">
       {/* Header */}
-      {user ? (
-        <div className="text-xs opacity-70 mt-1 space-y-1">
-          <div>Synced to Firebase: {user.email}</div>
-          <div className="text-[10px] opacity-60">uid: {user.uid}</div>
 
-          {/* ✅ Manual migrate button */}
-          <button
-            className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-            onClick={async () => {
-              const local = loadAppData() ?? {};
-              await migrateLocalToCloud(user.uid, local);
-              alert("Migrated local → Firebase ✅");
-            }}
-          >
-            Migrate local → Firebase
-          </button>
-        </div>
-      ) : (
-        <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
-      )}
+{user ? (
+  <div className="text-xs opacity-70 mt-1 space-y-2">
+    <div>Synced to Firebase: {user.email}</div>
+
+    <button
+      className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+      onClick={async () => {
+        const local = loadAppData() ?? {};
+        await migrateLocalToCloud(user.uid, local);
+        alert("Migrated local → Firebase ✅");
+      }}
+    >
+      Migrate local → Firebase
+    </button>
+  </div>
+) : (
+  <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
+)}
 
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-purple">Life Ops</h1>
-        <div className="text-xs opacity-60">BUILD: 2026-01-27-B</div>
+
+        <div className="text-xs opacity-60">BUILD: 2026-01-27-A</div>
 
         <div className="mt-2 space-y-2">
           <div
@@ -743,6 +760,7 @@ export default function Home() {
         </div>
       )}
 
+      {/* Always show gentle question */}
       <PromptCard
         prompt={dailyPrompt}
         answer={selectedAnswer}
@@ -759,11 +777,566 @@ export default function Home() {
         }}
       />
 
-      {/* ✅ Everything below here: keep exactly as your current UI blocks */}
-      {/* Weekly focus, weekly priorities, weekly review, next trip, next match, weekly checklist, extras, history drawer... */}
-      {/* (Paste your existing blocks unchanged from your current file) */}
+      {/* Weekly: Focus (Top 3) */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold opacity-90">This week’s focus</div>
+          <div className="text-xs opacity-60">{weekKey}</div>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <div className="text-xs font-semibold opacity-70">Top priorities</div>
+
+          {weeklyPriorities
+            .map((x) => (x || "").trim())
+            .filter(Boolean)
+            .slice(0, 3)
+            .map((item, idx) => (
+              <div key={idx} className="rounded-xl bg-card2 px-3 py-2 text-sm">
+                {item}
+              </div>
+            ))}
+
+          {weeklyPriorities.map((x) => (x || "").trim()).filter(Boolean).length === 0 && (
+            <div className="text-sm opacity-70">No priorities set yet — add 1–3 below.</div>
+          )}
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <div className="text-xs font-semibold opacity-70">Nice to do (if energy)</div>
+
+          {weeklyNice
+            .map((x) => (x || "").trim())
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((item, idx) => (
+              <div key={idx} className="rounded-xl bg-card2 px-3 py-2 text-sm opacity-90">
+                {item}
+              </div>
+            ))}
+
+          {weeklyNice.map((x) => (x || "").trim()).filter(Boolean).length === 0 && (
+            <div className="text-sm opacity-60">Nothing in “nice-to-do” yet — totally fine.</div>
+          )}
+        </div>
+
+        <div className="mt-4">
+          <button
+            className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+            onClick={() => setShowWeeklyChecklist((v) => !v)}
+          >
+            {showWeeklyChecklist ? "Hide weekly checklist" : "Show weekly checklist"}
+          </button>
+        </div>
+      </div>
+
+      {/* Weekly priorities (editable, persisted) */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold opacity-90">Weekly priorities</div>
+          <div className="text-xs opacity-60">{weekKey}</div>
+        </div>
+
+        <div className="mt-3 space-y-4">
+          <div className="space-y-2">
+            <div className="text-xs font-semibold opacity-70">This week’s priorities</div>
+            <div className="space-y-2">
+              {weeklyPriorities.map((v, i) => (
+                <input
+                  key={`p-${i}`}
+                  value={v}
+                  disabled={!canEdit}
+                  onChange={(e) => setWeeklyRow("priorities", i, e.target.value)}
+                  placeholder={`Priority ${i + 1}`}
+                  className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs font-semibold opacity-70">Nice to do (if energy)</div>
+            <div className="space-y-2">
+              {weeklyNice.map((v, i) => (
+                <input
+                  key={`n-${i}`}
+                  value={v}
+                  disabled={!canEdit}
+                  onChange={(e) => setWeeklyRow("nice", i, e.target.value)}
+                  placeholder={`Nice to do ${i + 1}`}
+                  className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+                />
+              ))}
+            </div>
+          </div>
+
+          {!canEdit && <div className="text-xs opacity-60">Weekly priorities are view-only for past days.</div>}
+        </div>
+      </div>
+
+      {/* Weekly review (editable, persisted) */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold opacity-90">Weekly review</div>
+          <div className="text-xs opacity-60">{weekKey}</div>
+        </div>
+
+        <div className="mt-3 space-y-3">
+          <div className="space-y-1">
+            <div className="text-xs font-semibold opacity-70">What went well</div>
+            <textarea
+              value={weeklyReview.wentWell}
+              disabled={!canEdit}
+              onChange={(e) => setWeeklyReviewField("wentWell", e.target.value)}
+              placeholder="A couple of sentences is enough."
+              className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-xs font-semibold opacity-70">What drained me</div>
+            <textarea
+              value={weeklyReview.drained}
+              disabled={!canEdit}
+              onChange={(e) => setWeeklyReviewField("drained", e.target.value)}
+              placeholder="What cost the most energy?"
+              className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-xs font-semibold opacity-70">One thing I’ll change next week</div>
+            <textarea
+              value={weeklyReview.change}
+              disabled={!canEdit}
+              onChange={(e) => setWeeklyReviewField("change", e.target.value)}
+              placeholder="Keep it tiny and practical."
+              className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-xs font-semibold opacity-70">One win I’m proud of</div>
+            <textarea
+              value={weeklyReview.win}
+              disabled={!canEdit}
+              onChange={(e) => setWeeklyReviewField("win", e.target.value)}
+              placeholder="Even small wins count."
+              className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+          </div>
+
+          {canEdit && (
+            <button
+              className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+              onClick={() =>
+                setWeeklyReviewByWeekKey((prev) => {
+                  const safePrev = prev ?? {};
+                  return { ...safePrev, [weekKey]: { wentWell: "", drained: "", change: "", win: "" } };
+                })
+              }
+            >
+              Clear weekly review
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Next trip (persisted) */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold opacity-90">Next trip</div>
+          {canEdit && (
+            <button
+              className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+              onClick={() => setNextTrip({ title: "", date: "", location: "", notes: "" })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <input
+            value={nextTrip.title}
+            disabled={!canEdit}
+            onChange={(e) => setNextTrip((p) => ({ ...p, title: e.target.value }))}
+            placeholder="Trip name (e.g., Vienna weekend)"
+            className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+          />
+          <div className="flex gap-2">
+            <input
+              value={nextTrip.date}
+              disabled={!canEdit}
+              onChange={(e) => setNextTrip((p) => ({ ...p, date: e.target.value }))}
+              placeholder="Date (e.g., 2026-02-12)"
+              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+            <input
+              value={nextTrip.location}
+              disabled={!canEdit}
+              onChange={(e) => setNextTrip((p) => ({ ...p, location: e.target.value }))}
+              placeholder="Location"
+              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+          </div>
+          <textarea
+            value={nextTrip.notes}
+            disabled={!canEdit}
+            onChange={(e) => setNextTrip((p) => ({ ...p, notes: e.target.value }))}
+            placeholder="Notes (hotel, travel time, key things to do)"
+            className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+          />
+        </div>
+      </div>
+
+      {/* Next match (persisted) */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold opacity-90">Next match</div>
+          {canEdit && (
+            <button
+              className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+              onClick={() => setNextMatch({ fixture: "", date: "", ground: "", notes: "" })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <input
+            value={nextMatch.fixture}
+            disabled={!canEdit}
+            onChange={(e) => setNextMatch((p) => ({ ...p, fixture: e.target.value }))}
+            placeholder="Fixture (e.g., West Ham vs __)"
+            className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+          />
+          <div className="flex gap-2">
+            <input
+              value={nextMatch.date}
+              disabled={!canEdit}
+              onChange={(e) => setNextMatch((p) => ({ ...p, date: e.target.value }))}
+              placeholder="Date (e.g., 2026-02-01)"
+              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+            <input
+              value={nextMatch.ground}
+              disabled={!canEdit}
+              onChange={(e) => setNextMatch((p) => ({ ...p, ground: e.target.value }))}
+              placeholder="Ground"
+              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+            />
+          </div>
+          <textarea
+            value={nextMatch.notes}
+            disabled={!canEdit}
+            onChange={(e) => setNextMatch((p) => ({ ...p, notes: e.target.value }))}
+            placeholder="Notes (travel, ticket, stand/seat plan)"
+            className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
+          />
+        </div>
+      </div>
+
+      {/* Weekly checklist (persisted) */}
+      {showWeeklyChecklist && (
+        <div className="rounded-2xl border border-white/10 bg-card p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold opacity-90">Weekly checklist</div>
+            <div className="flex gap-2 items-center">
+              <div className="text-xs opacity-60">{weekKey}</div>
+              {canEdit && (
+                <button
+                  className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+                  onClick={resetChecklistTicks}
+                >
+                  Reset ticks
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {ensureNRows(weeklyChecklist.items, 6).map((v, i) => {
+              const tick = Array.isArray(weeklyChecklist.ticks) ? !!weeklyChecklist.ticks[i] : false;
+
+              return (
+                <div key={i} className="flex items-center gap-2 rounded-xl bg-card2 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={tick}
+                    disabled={!canEdit}
+                    onChange={() => toggleChecklistTick(i)}
+                    className="h-4 w-4"
+                  />
+                  <input
+                    value={v}
+                    disabled={!canEdit}
+                    onChange={(e) => setChecklistItem(i, e.target.value)}
+                    placeholder={`Weekly task ${i + 1}`}
+                    className="flex-1 bg-transparent text-sm outline-none"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Extras hidden only on Red+Reduced or bare */}
+      {showExtras && (
+        <div className="space-y-4">
+          {/* Today tasks (persisted per day by TodayCard using props) */}
+          <TodayCard
+            dateKey={selectedKey}
+            tasks={selectedTasks}
+            onChangeTasks={canEdit ? updateSelectedTasks : () => {}}
+            readOnly={!canEdit}
+          />
+
+          {/* Status sliders (persisted) */}
+          <div className="rounded-2xl border border-white/10 bg-card p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold opacity-90">Status</div>
+              <div className="text-xs opacity-60">Quick check</div>
+            </div>
+
+            <div className="mt-3 space-y-4">
+              {[
+                { key: "energy", label: "Energy" },
+                { key: "focus", label: "Focus" },
+                { key: "stress", label: "Stress" },
+              ].map((row) => {
+                const value = quickCheck?.[row.key] ?? 2;
+
+                return (
+                  <div key={row.key} className="space-y-1">
+                    <div className="flex items-center justify-between text-sm opacity-90">
+                      <div>{row.label}</div>
+                      <div className="text-xs opacity-60">{value}/5</div>
+                    </div>
+
+                    <input
+                      type="range"
+                      min="1"
+                      max="5"
+                      value={value}
+                      disabled={!canEdit}
+                      onChange={(e) => {
+                        const nextVal = Number(e.target.value);
+                        setQuickCheckByDate((prev) => ({
+                          ...(prev ?? {}),
+                          [selectedKey]: { ...(prev?.[selectedKey] ?? { energy: 2, focus: 2, stress: 3 }), [row.key]: nextVal },
+                        }));
+                      }}
+                      className="w-full"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Upcoming (persisted + add/edit/delete) */}
+          <div className="rounded-2xl border border-white/10 bg-card p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold opacity-90">Upcoming</div>
+                <div className="text-xs opacity-60">Trips, matches, uni deadlines, anything.</div>
+              </div>
+
+              {canEdit && (
+                <button
+                  className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+                  onClick={openAddUpcoming}
+                >
+                  + Add
+                </button>
+              )}
+            </div>
+
+            {/* Editor */}
+            {upcomingEditorOpen && (
+              <div className="mt-3 rounded-2xl bg-card2 p-3 space-y-2">
+                <div className="flex gap-2">
+                  <select
+                    value={upcomingDraft.type}
+                    disabled={!canEdit}
+                    onChange={(e) => setUpcomingDraft((p) => ({ ...p, type: e.target.value }))}
+                    className="rounded-xl bg-bg px-3 py-2 text-sm outline-none flex-1"
+                  >
+                    <option value="match">match</option>
+                    <option value="trip">trip</option>
+                    <option value="uni">uni</option>
+                    <option value="work">work</option>
+                    <option value="other">other</option>
+                  </select>
+
+                  <button
+                    className="rounded-xl bg-bg px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+                    onClick={() => {
+                      setUpcomingEditorOpen(false);
+                      setUpcomingEditId(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <input
+                  value={upcomingDraft.title}
+                  disabled={!canEdit}
+                  onChange={(e) => setUpcomingDraft((p) => ({ ...p, title: e.target.value }))}
+                  placeholder="Title (required)"
+                  className="w-full rounded-xl bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+                />
+
+                <div className="flex gap-2">
+                  <input
+                    value={upcomingDraft.date}
+                    disabled={!canEdit}
+                    onChange={(e) => setUpcomingDraft((p) => ({ ...p, date: e.target.value }))}
+                    placeholder="Date (YYYY-MM-DD)"
+                    className="flex-1 rounded-xl bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+                  />
+                  <input
+                    value={upcomingDraft.location}
+                    disabled={!canEdit}
+                    onChange={(e) => setUpcomingDraft((p) => ({ ...p, location: e.target.value }))}
+                    placeholder="Location"
+                    className="flex-1 rounded-xl bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+                  />
+                </div>
+
+                <textarea
+                  value={upcomingDraft.notes}
+                  disabled={!canEdit}
+                  onChange={(e) => setUpcomingDraft((p) => ({ ...p, notes: e.target.value }))}
+                  placeholder="Notes"
+                  className="w-full min-h-[90px] rounded-xl bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+                />
+
+                <button
+                  className="w-full rounded-xl bg-purple px-3 py-2 text-sm font-semibold hover:opacity-90 active:opacity-80"
+                  onClick={saveUpcomingDraft}
+                  disabled={!canEdit}
+                >
+                  {upcomingEditId ? "Save changes" : "Save item"}
+                </button>
+
+                {!upcomingDraft.title.trim() && (
+                  <div className="text-xs opacity-70">Title is required to save.</div>
+                )}
+              </div>
+            )}
+
+            {/* List */}
+            <div className="mt-3 space-y-2">
+              {upcomingSorted.length === 0 ? (
+                <div className="text-sm opacity-70">No upcoming items yet.</div>
+              ) : (
+                upcomingSorted.slice(0, 12).map((item) => (
+                  <div key={item.id} className="rounded-xl bg-card2 p-3 space-y-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold">
+                          <span className="opacity-70 mr-2">{(item.type || "other").toUpperCase()}</span>
+                          {item.title || "Untitled"}
+                        </div>
+                        {(item.date || item.location) && (
+                          <div className="text-xs opacity-70">
+                            {item.date ? item.date : ""}
+                            {item.date && item.location ? " • " : ""}
+                            {item.location ? item.location : ""}
+                          </div>
+                        )}
+                      </div>
+
+                      {canEdit && (
+                        <div className="flex gap-2 shrink-0">
+                          <button
+                            className="rounded-xl bg-bg px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+                            onClick={() => openEditUpcoming(item)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="rounded-xl bg-bg px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+                            onClick={() => deleteUpcoming(item.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {item.notes && <div className="text-sm opacity-80 whitespace-pre-wrap">{item.notes}</div>}
+                  </div>
+                ))
+              )}
+
+              {upcomingSorted.length > 12 && (
+                <div className="text-xs opacity-60">Showing first 12 items. (We can add a “show all” later.)</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Last 30 days drawer */}
+      {showHistory && (
+        <div className="fixed inset-0 z-50" onClick={() => setShowHistory(false)}>
+          <div className="absolute inset-0 bg-black/60" />
+
+          <div
+            className="absolute left-0 right-0 bottom-0 rounded-t-2xl border border-white/10 bg-bg p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold opacity-90">Last 30 days</div>
+              <button
+                className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90"
+                onClick={() => setShowHistory(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-3 max-h-[60vh] overflow-auto space-y-1">
+              {last30.map((k) => {
+                const s = statusByDate[k] ?? "amber";
+                const dot = s === "green" ? "bg-green" : s === "amber" ? "bg-amber" : "bg-red";
+
+                return (
+                  <button
+                    key={k}
+                    className={`w-full rounded-xl px-3 py-2 text-left text-sm hover:opacity-90 ${
+                      k === selectedKey ? "bg-purple/25" : "bg-card2"
+                    }`}
+                    onClick={() => {
+                      setSelectedKey(k);
+                      setShowHistory(false);
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
+                        <span>{formatLabel(k)}</span>
+                      </div>
+                      <span className="text-xs opacity-60">{k}</span>
+                    </div>
+
+                    {k === today && <div className="text-xs opacity-60 mt-1">Today</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sheets */}
+          {/* Sheets */}
       <SupportSheet
         open={supportOpen}
         onClose={() => setSupportOpen(false)}

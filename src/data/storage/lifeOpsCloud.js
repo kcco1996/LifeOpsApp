@@ -67,7 +67,14 @@ export function resetCloudSaveQueue() {
 }
 
 export async function migrateLocalToCloud(uid, localState) {
+  if (!uid) return;
+  const payload = localState ?? {};
+  await saveCloudState(uid, payload);
+}
+
+export async function migrateLocalToCloud(uid, localState) {
   if (!uid) throw new Error("Missing uid");
+  
 
   await setDoc(
     refFor(uid),
