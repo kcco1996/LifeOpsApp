@@ -19,12 +19,9 @@ import PlanEditorSheet from "../../components/Sheets/PlanEditorSheet";
 import DayTypeEditorSheet from "../../components/Sheets/DayTypeEditorSheet";
 
 import { useAuth } from "../../hooks/useAuth";
-import {
-  subscribeCloudState,
-  saveCloudState,
-  loadCloudState,
-  migrateLocalToCloud,
-} from "../../data/storage/lifeOpsCloud";
+
+import { subscribeCloudState, saveCloudState, loadCloudState } from "../../data/storage/lifeOpsCloud";
+
 
 import { loadAppData, saveAppData } from "../../data/storage/localStorage";
 
@@ -618,25 +615,12 @@ useEffect(() => {
     <div className="max-w-md p-4 space-y-4">
       {/* Header */}
 
-{user ? (
-  <div className="text-xs opacity-70 mt-1 space-y-2">
-    <div>Synced to Firebase: {user.email}</div>
-
-    <button
-      className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-      onClick={async () => {
-        const local = loadAppData() ?? {};
-        await migrateLocalToCloud(user.uid, local);
-        alert("Migrated local → Firebase ✅");
-      }}
-    >
-      Migrate local → Firebase
-    </button>
-  </div>
+      {user ? (
+  <div className="text-xs opacity-70 mt-1">Synced to Firebase: {user.email}</div>
+  
 ) : (
   <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
 )}
-
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-purple">Life Ops</h1>
 
