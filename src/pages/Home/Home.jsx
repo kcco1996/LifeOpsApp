@@ -4,6 +4,7 @@
 // ✅ Saves EVERYTHING that gets loaded (including weeklyChecklist + showWeeklyChecklist)
 // ✅ Upcoming add/edit/delete persists reliably
 // ✅ Firebase sync + migrate button (whitelisted email)
+// ✅ FIXED: prevents cloud read -> state set -> cloud write loop (quota spike)
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -146,6 +147,9 @@ export default function Home() {
 
   // prevents “cloud snapshot -> setState -> save -> overwrite cloud” loops
   const applyingRemote = useRef(false);
+
+  // 🔒 NEW: skip exactly one cloud save after applying remote data
+  const skipNextCloudSave = useRef(false);
 
   // one-time migration: if cloud is empty but local has data, upload it once
   const migratedOnce = useRef(false);
@@ -364,7 +368,10 @@ export default function Home() {
         items: ensureNRows([], 6),
         ticks: [false, false, false, false, false, false],
       };
-      return { ...safePrev, [weekKey]: { ...cur, ticks: [false, false, false, false, false, false] } };
+      return {
+        ...safePrev,
+        [weekKey]: { ...cur, ticks: [false, false, false, false, false, false] },
+      };
     });
   }
 
@@ -481,11 +488,16 @@ export default function Home() {
         await migrateLocalToCloud(user.uid, local);
       }
 
+      // If we are about to apply cloud state, skip next cloud save
+      if (cloud) skipNextCloudSave.current = true;
+
       applyingRemote.current = true;
       applySaved(cloud || local);
-      setTimeout(() => {
+
+      // Keep remote flag through the next effect cycle reliably
+      queueMicrotask(() => {
         applyingRemote.current = false;
-      }, 0);
+      });
 
       setHydrated(true);
 
@@ -497,11 +509,15 @@ export default function Home() {
         if (json === lastCloudJSON.current) return;
         lastCloudJSON.current = json;
 
+        // Snapshot apply -> skip next cloud save
+        skipNextCloudSave.current = true;
+
         applyingRemote.current = true;
         applySaved(rest);
-        setTimeout(() => {
+
+        queueMicrotask(() => {
           applyingRemote.current = false;
-        }, 0);
+        });
       });
     })();
 
@@ -542,6 +558,12 @@ export default function Home() {
     // Cloud save only if signed in and not applying remote
     if (!user) return;
     if (applyingRemote.current) return;
+
+    // 🔒 Prevent “cloud apply -> save back” loop
+    if (skipNextCloudSave.current) {
+      skipNextCloudSave.current = false;
+      return;
+    }
 
     saveCloudState(user.uid, payload);
   }, [
@@ -1226,7 +1248,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Sheets */}
+     {/* Sheets */}
       <SupportSheet
         open={supportOpen}
         onClose={() => setSupportOpen(false)}
