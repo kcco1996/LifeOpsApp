@@ -1,27 +1,24 @@
+// src/utils/firebase.js
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import {
-  initializeFirestore,
-  persistentLocalCache,
-  persistentSingleTabManager,
+  getFirestore,
+  enableIndexedDbPersistence,
 } from "firebase/firestore";
 
-const firebaseConfig = {
+// ✅ Put your Firebase config here (from Firebase Console)
+ const firebaseConfig = {
   apiKey: "AIzaSyAtse4bJY8v6jm48O5kD77KeFVjEVSnyCA",
   authDomain: "lifeops-95978.firebaseapp.com",
   projectId: "lifeops-95978",
   storageBucket: "lifeops-95978.firebasestorage.app",
   messagingSenderId: "81691339428",
-  appId: "1:81691339428:web:9722857815dda3e7971431",
+  appId: "1:81691339428:web:9722857815dda3e7971431"
 };
-
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const provider = new GoogleAuthProvider();
+export const db = getFirestore(app);
 
-// ✅ Firestore with offline cache (new API)
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentSingleTabManager(),
-  }),
-});
+// Offline cache (nice UX, not required for “survive reinstall”)
+enableIndexedDbPersistence(db).catch(() => {});
