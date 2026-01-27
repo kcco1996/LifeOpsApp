@@ -55,9 +55,7 @@ export async function loadCloudState(uid) {
 }
 
 /**
- * Debounced + deduped save.
- * Call this as often as you want; it will write at most ~1 per delay window,
- * and only when the data has changed since last successful save.
+ * Reset pending debounced write (useful if you sign out / switch user).
  */
 export function resetCloudSaveQueue() {
   if (saveTimer) clearTimeout(saveTimer);
@@ -66,31 +64,36 @@ export function resetCloudSaveQueue() {
   pendingState = null;
 }
 
-export async function migrateLocalToCloud(uid, localState) {
-  if (!uid) return;
-  const payload = localState ?? {};
-  await saveCloudState(uid, payload);
-}
-
+/**
+ * One-time migration helper:
+ * Writes local state to cloud and stamps migratedAt/updatedAt.
+ * Also seeds the dedupe hash to avoid an immediate write-back loop.
+ */
 export async function migrateLocalToCloud(uid, localState) {
   if (!uid) throw new Error("Missing uid");
-  
+
+  const state = localState ?? {};
 
   await setDoc(
     refFor(uid),
     {
-      ...(localState ?? {}),
+      ...state,
       migratedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
 
-  // Seed hash (metadata ignored by hashState anyway, but keep consistent)
-  const { updatedAt, migratedAt, ...rest } = localState ?? {};
+  // Seed hash (ignore metadata keys, same as normal write hashing)
+  const { updatedAt, migratedAt, ...rest } = state ?? {};
   lastSavedHashByUid.set(uid, hashState(rest));
 }
 
+/**
+ * Debounced + deduped save.
+ * Call this as often as you want; it will write at most ~1 per delay window,
+ * and only when the data has changed since last successful save.
+ */
 export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
   if (!uid) return;
 
@@ -151,7 +154,6 @@ export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
 export function subscribeCloudState(uid, onChange) {
   if (!uid) return () => {};
 
-  // NOTE: we don't need includeMetadataChanges:true if we already ignore hasPendingWrites.
   return onSnapshot(refFor(uid), (snap) => {
     if (!snap.exists()) return;
 
