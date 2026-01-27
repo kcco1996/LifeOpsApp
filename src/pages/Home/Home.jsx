@@ -18,6 +18,9 @@ import SupportSheet from "../../components/Sheets/SupportSheet";
 import PlanEditorSheet from "../../components/Sheets/PlanEditorSheet";
 import DayTypeEditorSheet from "../../components/Sheets/DayTypeEditorSheet";
 
+import { useAuth } from "../../hooks/useAuth";
+import { subscribeCloudState, saveCloudState, loadCloudState } from "../../data/storage/lifeOpsCloud";
+
 import { loadAppData, saveAppData } from "../../data/storage/localStorage";
 
 // -------------------- Date helpers --------------------
@@ -130,6 +133,13 @@ function safeId() {
 
 // -------------------- Home --------------------
 export default function Home() {
+   const { user, authLoading } = useAuth();
+
+  // prevents “cloud snapshot -> setState -> save -> overwrite cloud” loops
+  const applyingRemote = useRef(false);
+
+  // one-time migration: if cloud is empty but local has data, upload it once
+  const migratedOnce = useRef(false);
   function defaultDayTypeFor(key) {
     const d = keyToDate(key);
     const dow = d.getDay(); // 0 Sun ... 6 Sat
@@ -406,39 +416,90 @@ export default function Home() {
     setUpcomingItems((prev) => (Array.isArray(prev) ? prev.filter((x) => x.id !== id) : []));
   }
 
-  // ----- Load once -----
+    // ----- Load & Sync -----
   useEffect(() => {
-    const saved = loadAppData() ?? {};
+    if (authLoading) return;
 
-    if (saved.tasksByDate) setTasksByDate(saved.tasksByDate);
-    if (saved.promptByDate) setPromptByDate(saved.promptByDate);
-    if (saved.statusByDate) setStatusByDate(saved.statusByDate);
-    if (saved.supportPlanByStatus) setSupportPlanByStatus(saved.supportPlanByStatus);
-    if (saved.dayTypeByDate) setDayTypeByDate(saved.dayTypeByDate);
-    if (saved.prepDoneByDate) setPrepDoneByDate(saved.prepDoneByDate);
-    if (saved.copingDoneByDate) setCopingDoneByDate(saved.copingDoneByDate);
-    if (saved.copingPickByDate) setCopingPickByDate(saved.copingPickByDate);
-    if (saved.supportShownByDate) setSupportShownByDate(saved.supportShownByDate);
-    if (saved.quickCheckByDate) setQuickCheckByDate(saved.quickCheckByDate);
+    // Helper: apply a saved object to state (shared by local + cloud)
+    function applySaved(saved) {
+      if (!saved) return;
 
-    if (saved.weeklyByWeekKey) setWeeklyByWeekKey(saved.weeklyByWeekKey);
-    if (saved.weeklyChecklistByWeekKey) setWeeklyChecklistByWeekKey(saved.weeklyChecklistByWeekKey);
-    if (saved.weeklyReviewByWeekKey) setWeeklyReviewByWeekKey(saved.weeklyReviewByWeekKey);
-    if (typeof saved.showWeeklyChecklist === "boolean") setShowWeeklyChecklist(saved.showWeeklyChecklist);
+      if (saved.tasksByDate) setTasksByDate(saved.tasksByDate);
+      if (saved.promptByDate) setPromptByDate(saved.promptByDate);
+      if (saved.statusByDate) setStatusByDate(saved.statusByDate);
+      if (saved.supportPlanByStatus) setSupportPlanByStatus(saved.supportPlanByStatus);
+      if (saved.dayTypeByDate) setDayTypeByDate(saved.dayTypeByDate);
+      if (saved.prepDoneByDate) setPrepDoneByDate(saved.prepDoneByDate);
+      if (saved.copingDoneByDate) setCopingDoneByDate(saved.copingDoneByDate);
+      if (saved.copingPickByDate) setCopingPickByDate(saved.copingPickByDate);
+      if (saved.supportShownByDate) setSupportShownByDate(saved.supportShownByDate);
+      if (saved.quickCheckByDate) setQuickCheckByDate(saved.quickCheckByDate);
 
-    if (saved.nextTrip) setNextTrip(saved.nextTrip);
-    if (saved.nextMatch) setNextMatch(saved.nextMatch);
+      if (saved.weeklyByWeekKey) setWeeklyByWeekKey(saved.weeklyByWeekKey);
+      if (saved.weeklyChecklistByWeekKey) setWeeklyChecklistByWeekKey(saved.weeklyChecklistByWeekKey);
+      if (saved.weeklyReviewByWeekKey) setWeeklyReviewByWeekKey(saved.weeklyReviewByWeekKey);
+      if (typeof saved.showWeeklyChecklist === "boolean") setShowWeeklyChecklist(saved.showWeeklyChecklist);
 
-    if (saved.upcomingItems) setUpcomingItems(saved.upcomingItems);
+      if (saved.nextTrip) setNextTrip(saved.nextTrip);
+      if (saved.nextMatch) setNextMatch(saved.nextMatch);
 
-    setHydrated(true);
-  }, []);
+      if (saved.upcomingItems) setUpcomingItems(saved.upcomingItems);
+    }
 
-  // ----- Save on change (AFTER hydration) -----
+    // If not signed in -> behave exactly like before (localStorage)
+    if (!user) {
+      const saved = loadAppData() ?? {};
+      applySaved(saved);
+      setHydrated(true);
+      return;
+    }
+
+    // Signed in -> Firestore is source of truth (live sync)
+    let unsub = null;
+
+    (async () => {
+      // 1) Try to load cloud once (so we can decide migration)
+      const cloud = await loadCloudState(user.uid);
+
+      // 2) Load local as a fallback (for first time sign-in)
+      const local = loadAppData() ?? {};
+
+      // If cloud empty and local has something meaningful, migrate once
+      const localHasData = local && Object.keys(local).length > 0;
+
+      if (!cloud && localHasData && !migratedOnce.current) {
+        migratedOnce.current = true;
+        await saveCloudState(user.uid, local);
+      }
+
+      // Apply whichever exists (cloud preferred)
+      applyingRemote.current = true;
+      applySaved(cloud || local);
+      applyingRemote.current = false;
+
+      setHydrated(true);
+
+      // 3) Subscribe to live updates (phone <-> computer sync)
+      unsub = subscribeCloudState(user.uid, (nextCloud) => {
+        if (!nextCloud) return;
+
+        applyingRemote.current = true;
+        applySaved(nextCloud);
+        applyingRemote.current = false;
+      });
+    })();
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [user, authLoading]);
+
+
+    // ----- Save on change (AFTER hydration) -----
   useEffect(() => {
     if (!hydrated) return;
 
-    saveAppData({
+    const payload = {
       tasksByDate,
       promptByDate,
       statusByDate,
@@ -451,16 +512,25 @@ export default function Home() {
       quickCheckByDate,
 
       weeklyByWeekKey,
-      weeklyChecklistByWeekKey,  // ✅ IMPORTANT: you were not saving this
+      weeklyChecklistByWeekKey,
       weeklyReviewByWeekKey,
-      showWeeklyChecklist,       // ✅ IMPORTANT: you were not saving this
+      showWeeklyChecklist,
 
       nextTrip,
       nextMatch,
-      upcomingItems,             // ✅ Upcoming persists
-    });
+      upcomingItems,
+    };
+
+    // Always keep localStorage as a backup/offline cache
+    saveAppData(payload);
+
+    // If signed in and we are not currently applying a remote snapshot, save to Firestore too
+    if (user && !applyingRemote.current) {
+      saveCloudState(user.uid, payload);
+    }
   }, [
     hydrated,
+    user,
 
     tasksByDate,
     promptByDate,
@@ -482,6 +552,7 @@ export default function Home() {
     nextMatch,
     upcomingItems,
   ]);
+
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
   useEffect(() => {
@@ -514,6 +585,12 @@ export default function Home() {
   return (
     <div className="max-w-md p-4 space-y-4">
       {/* Header */}
+
+      {user ? (
+  <div className="text-xs opacity-70 mt-1">Synced to Firebase: {user.email}</div>
+) : (
+  <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
+)}
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-purple">Life Ops</h1>
 

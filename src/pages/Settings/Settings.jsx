@@ -1,10 +1,22 @@
+import { signInWithPopup, signOut } from "firebase/auth";
+import { auth, provider } from "../../utils/firebase"; // adjust path if needed
+import { useAuth } from "../../hooks/useAuth";
+
 export default function Settings() {
+  const { user } = useAuth();
+
   return (
-    <div className="space-y-3">
-      <h1 className="text-2xl font-bold tracking-tight text-purple">Settings</h1>
-      <div className="rounded-2xl border border-white/10 bg-card p-4 text-sm opacity-80">
-        Settings go here.
-      </div>
+    <div>
+      {!user ? (
+        <button onClick={() => signInWithPopup(auth, provider)}>
+          Sign in with Google
+        </button>
+      ) : (
+        <>
+          <div>Signed in as: {user.email}</div>
+          <button onClick={() => signOut(auth)}>Sign out</button>
+        </>
+      )}
     </div>
   );
 }

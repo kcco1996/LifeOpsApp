@@ -8,9 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "predeploy": "npm run build",
-     "deploy": "npm run build && gh-pages -d dist"
+    "deploy": "npm run build && gh-pages -d dist"
   },
   "dependencies": {
+    "firebase": "^12.8.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
