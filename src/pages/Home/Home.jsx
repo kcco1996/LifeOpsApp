@@ -151,6 +151,8 @@ export default function Home() {
   }
 
   const lastCloudJSON = useRef("");
+const skipNextCloudSave = useRef(false);
+const lastSavedJSON = useRef("");
 
   // ----- Per-day storage -----
   const [tasksByDate, setTasksByDate] = useState({});
@@ -485,9 +487,10 @@ saved = clean;
       }
 
       // Apply whichever exists (cloud preferred)
-      applyingRemote.current = true;
-      applySaved(cloud || local);
-      applyingRemote.current = false;
+     applyingRemote.current = true;
+skipNextCloudSave.current = true;
+applySaved(cloud || local);
+applyingRemote.current = false;
 
       setHydrated(true);
 
@@ -502,6 +505,7 @@ unsub = subscribeCloudState(user.uid, (nextCloud) => {
   lastCloudJSON.current = json;
 
   applyingRemote.current = true;
+  skipNextCloudSave.current = true;
   applySaved(rest);
   applyingRemote.current = false;
 });
@@ -516,6 +520,7 @@ unsub = subscribeCloudState(user.uid, (nextCloud) => {
     // ----- Save on change (AFTER hydration) -----
 useEffect(() => {
   if (!hydrated) return;
+
 
   const payload = {
     tasksByDate,
@@ -541,6 +546,16 @@ useEffect(() => {
 
   // Always save locally immediately (fast + offline safe)
   saveAppData(payload);
+
+  // If this render was caused by applying Firestore -> do NOT write back
+if (skipNextCloudSave.current) {
+  skipNextCloudSave.current = false;
+  return;
+}
+
+const json = JSON.stringify(payload);
+if (json === lastSavedJSON.current) return;
+lastSavedJSON.current = json;
 
   // 🔥 Debounced Firestore save
   if (user && !applyingRemote.current) {
