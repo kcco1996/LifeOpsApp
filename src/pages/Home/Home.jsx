@@ -427,6 +427,9 @@ export default function Home() {
     function applySaved(saved) {
       if (!saved) return;
 
+      const { updatedAt, ...clean } = saved;
+saved = clean;
+
       if (saved.tasksByDate) setTasksByDate(saved.tasksByDate);
       if (saved.promptByDate) setPromptByDate(saved.promptByDate);
       if (saved.statusByDate) setStatusByDate(saved.statusByDate);
@@ -489,21 +492,19 @@ export default function Home() {
       setHydrated(true);
 
       // 3) Subscribe to live updates (phone <-> computer sync)
-      unsub = subscribeCloudState(user.uid, (nextCloud) => {
-        if (!nextCloud) return;
+unsub = subscribeCloudState(user.uid, (nextCloud) => {
+  if (!nextCloud) return;
 
-        
-  // strip updatedAt so timestamp changes don’t cause “bounces”
   const { updatedAt, ...rest } = nextCloud;
   const json = JSON.stringify(rest);
 
   if (json === lastCloudJSON.current) return;
   lastCloudJSON.current = json;
 
-        applyingRemote.current = true;
-        applySaved(nextCloud);
-        applyingRemote.current = false;
-      });
+  applyingRemote.current = true;
+  applySaved(rest);
+  applyingRemote.current = false;
+});
     })();
 
     return () => {
