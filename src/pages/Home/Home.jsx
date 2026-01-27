@@ -150,6 +150,8 @@ export default function Home() {
     return "Rest day";
   }
 
+  const lastCloudJSON = useRef("");
+
   // ----- Per-day storage -----
   const [tasksByDate, setTasksByDate] = useState({});
   const [promptByDate, setPromptByDate] = useState({});
@@ -489,6 +491,14 @@ export default function Home() {
       unsub = subscribeCloudState(user.uid, (nextCloud) => {
         if (!nextCloud) return;
 
+        
+  // strip updatedAt so timestamp changes don’t cause “bounces”
+  const { updatedAt, ...rest } = nextCloud;
+  const json = JSON.stringify(rest);
+
+  if (json === lastCloudJSON.current) return;
+  lastCloudJSON.current = json;
+
         applyingRemote.current = true;
         applySaved(nextCloud);
         applyingRemote.current = false;
@@ -502,8 +512,6 @@ export default function Home() {
 
 
     // ----- Save on change (AFTER hydration) -----
-  const saveTimer = useRef(null);
-
 useEffect(() => {
   if (!hydrated) return;
 
@@ -529,17 +537,19 @@ useEffect(() => {
     upcomingItems,
   };
 
-  // Always keep localStorage as backup/offline cache (instant)
+  // Always save locally immediately (fast + offline safe)
   saveAppData(payload);
 
-  // Debounce Firestore writes
+  // 🔥 Debounced Firestore save
   if (user && !applyingRemote.current) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
+
     saveTimer.current = setTimeout(() => {
       saveCloudState(user.uid, payload);
-    }, 800);
+    }, 800); // wait 800ms after last change
   }
 
+  // Cleanup if component rerenders quickly
   return () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
   };

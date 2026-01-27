@@ -10,15 +10,21 @@ export async function loadCloudState(uid) {
 }
 
 export async function saveCloudState(uid, state) {
-  await setDoc(
-    refFor(uid),
-    { ...state, updatedAt: serverTimestamp() },
-    { merge: true }
-  );
+  await setDoc(refFor(uid), { ...state, updatedAt: serverTimestamp() }, { merge: true });
 }
 
 export function subscribeCloudState(uid, onChange) {
-  return onSnapshot(refFor(uid), (snap) => {
-    onChange(snap.exists() ? snap.data() : null);
-  });
+  // includeMetadataChanges lets us see pending writes; we then ignore them
+  return onSnapshot(
+    refFor(uid),
+    { includeMetadataChanges: true },
+    (snap) => {
+      if (!snap.exists()) return;
+
+      // ✅ Ignore the “local echo” snapshot that causes bouncing
+      if (snap.metadata.hasPendingWrites) return;
+
+      onChange(snap.data());
+    }
+  );
 }
