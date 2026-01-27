@@ -465,7 +465,13 @@ export default function Home() {
       const local = loadAppData() ?? {};
 
       // If cloud empty and local has something meaningful, migrate once
-      const localHasData = local && Object.keys(local).length > 0;
+      const localHasData =
+  local &&
+  (
+    (local.upcomingItems && local.upcomingItems.length) ||
+    (local.tasksByDate && Object.keys(local.tasksByDate).length) ||
+    (local.weeklyByWeekKey && Object.keys(local.weeklyByWeekKey).length)
+  );
 
       if (!cloud && localHasData && !migratedOnce.current) {
         migratedOnce.current = true;
@@ -496,42 +502,12 @@ export default function Home() {
 
 
     // ----- Save on change (AFTER hydration) -----
-  useEffect(() => {
-    if (!hydrated) return;
+  const saveTimer = useRef(null);
 
-    const payload = {
-      tasksByDate,
-      promptByDate,
-      statusByDate,
-      supportPlanByStatus,
-      dayTypeByDate,
-      prepDoneByDate,
-      copingDoneByDate,
-      copingPickByDate,
-      supportShownByDate,
-      quickCheckByDate,
+useEffect(() => {
+  if (!hydrated) return;
 
-      weeklyByWeekKey,
-      weeklyChecklistByWeekKey,
-      weeklyReviewByWeekKey,
-      showWeeklyChecklist,
-
-      nextTrip,
-      nextMatch,
-      upcomingItems,
-    };
-
-    // Always keep localStorage as a backup/offline cache
-    saveAppData(payload);
-
-    // If signed in and we are not currently applying a remote snapshot, save to Firestore too
-    if (user && !applyingRemote.current) {
-      saveCloudState(user.uid, payload);
-    }
-  }, [
-    hydrated,
-    user,
-
+  const payload = {
     tasksByDate,
     promptByDate,
     statusByDate,
@@ -551,7 +527,47 @@ export default function Home() {
     nextTrip,
     nextMatch,
     upcomingItems,
-  ]);
+  };
+
+  // Always keep localStorage as backup/offline cache (instant)
+  saveAppData(payload);
+
+  // Debounce Firestore writes
+  if (user && !applyingRemote.current) {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveCloudState(user.uid, payload);
+    }, 800);
+  }
+
+  return () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+  };
+}, [
+  hydrated,
+  user,
+
+  tasksByDate,
+  promptByDate,
+  statusByDate,
+  supportPlanByStatus,
+  dayTypeByDate,
+  prepDoneByDate,
+  copingDoneByDate,
+  copingPickByDate,
+  supportShownByDate,
+  quickCheckByDate,
+
+  weeklyByWeekKey,
+  weeklyChecklistByWeekKey,
+  weeklyReviewByWeekKey,
+  showWeeklyChecklist,
+
+  nextTrip,
+  nextMatch,
+  upcomingItems,
+]);
+
 
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
