@@ -19,13 +19,9 @@ import PlanEditorSheet from "../../components/Sheets/PlanEditorSheet";
 import DayTypeEditorSheet from "../../components/Sheets/DayTypeEditorSheet";
 
 import { useAuth } from "../../hooks/useAuth";
-
-import { subscribeCloudState, saveCloudState, loadCloudState, migrateLocalToCloud } from "../../data/storage/lifeOpsCloud";
-
+import { subscribeCloudState, saveCloudState, loadCloudState } from "../../data/storage/lifeOpsCloud";
 
 import { loadAppData, saveAppData } from "../../data/storage/localStorage";
-
-import { migrateLocalToCloud } from "../../data/storage/lifeOpsCloud";
 
 // -------------------- Date helpers --------------------
 function todayKey() {
@@ -137,11 +133,6 @@ function safeId() {
 
 // -------------------- Home --------------------
 export default function Home() {
-  const OWNER_EMAIL = "kcco1996@gmail.com"; // <-- set this to your Google sign-in email
-const isOwner = !!user?.email && user.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
-
-const [cloudLoadedOnce, setCloudLoadedOnce] = useState(false);
-const [cloudHasData, setCloudHasData] = useState(false);
    const { user, authLoading } = useAuth();
 
   // prevents “cloud snapshot -> setState -> save -> overwrite cloud” loops
@@ -479,18 +470,6 @@ saved = clean;
       // 1) Try to load cloud once (so we can decide migration)
       const cloud = await loadCloudState(user.uid);
 
-      setCloudLoadedOnce(true);
-
-const cloudMeaningful =
-  !!cloud &&
-  (
-    (cloud.upcomingItems && cloud.upcomingItems.length) ||
-    (cloud.tasksByDate && Object.keys(cloud.tasksByDate).length) ||
-    (cloud.weeklyByWeekKey && Object.keys(cloud.weeklyByWeekKey).length)
-  );
-
-setCloudHasData(!!cloudMeaningful);
-
       // 2) Load local as a fallback (for first time sign-in)
       const local = loadAppData() ?? {};
 
@@ -542,9 +521,11 @@ setTimeout(() => {
     };
   }, [user, authLoading]);
 
-// ----- Save on change (AFTER hydration) -----
+
+    // ----- Save on change (AFTER hydration) -----
 useEffect(() => {
   if (!hydrated) return;
+
 
   const payload = {
     tasksByDate,
@@ -571,12 +552,29 @@ useEffect(() => {
   // Always save locally immediately (fast + offline safe)
   saveAppData(payload);
 
-  // ✅ If this update came from Firestore applying -> do not write back
-  if (!user) return;
-  if (applyingRemote.current) return;
+  // If this render was caused by applying Firestore -> do NOT write back
+if (skipNextCloudSave.current) {
+  skipNextCloudSave.current = false;
+  return;
+}
 
-  // ✅ Let lifeOpsCloud.js debounce + dedupe
-  saveCloudState(user.uid, payload);
+const json = JSON.stringify(payload);
+if (json === lastSavedJSON.current) return;
+lastSavedJSON.current = json;
+
+  // 🔥 Debounced Firestore save
+  if (user && !applyingRemote.current) {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+
+    saveTimer.current = setTimeout(() => {
+      saveCloudState(user.uid, payload);
+    }, 800); // wait 800ms after last change
+  }
+
+  // Cleanup if component rerenders quickly
+  return () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+  };
 }, [
   hydrated,
   user,
@@ -601,6 +599,8 @@ useEffect(() => {
   nextMatch,
   upcomingItems,
 ]);
+
+
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
   useEffect(() => {
@@ -636,35 +636,9 @@ useEffect(() => {
 
       {user ? (
   <div className="text-xs opacity-70 mt-1">Synced to Firebase: {user.email}</div>
-
-  {user && user.email === "kcco1996@gmail.com" && (
-  <button
-    className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-    onClick={async () => {
-      const local = loadAppData() ?? {};
-      await migrateLocalToCloud(user.uid, local);
-      alert("Migrated local data to Firebase ✅");
-    }}
-  >
-    Migrate local data to Firebase
-  </button>
-)}
-  
 ) : (
   <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
 )}
-{user && isOwner && cloudLoadedOnce && !cloudHasData && (
-  <button
-    className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-    onClick={async () => {
-      const local = loadAppData() ?? {};
-      await migrateLocalToCloud(user.uid, local);
-    }}
-  >
-    Migrate local data to Firebase
-  </button>
-)}
-
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-purple">Life Ops</h1>
 
