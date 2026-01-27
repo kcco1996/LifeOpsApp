@@ -3,6 +3,7 @@
 // ✅ Hydration guard prevents overwriting saved data on refresh
 // ✅ Saves EVERYTHING that gets loaded (including weeklyChecklist + showWeeklyChecklist)
 // ✅ Upcoming add/edit/delete persists reliably
+// ✅ Firebase sync + migrate button (whitelisted email)
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -19,7 +20,13 @@ import PlanEditorSheet from "../../components/Sheets/PlanEditorSheet";
 import DayTypeEditorSheet from "../../components/Sheets/DayTypeEditorSheet";
 
 import { useAuth } from "../../hooks/useAuth";
-import { subscribeCloudState, saveCloudState, loadCloudState } from "../../data/storage/lifeOpsCloud";
+
+import {
+  subscribeCloudState,
+  saveCloudState,
+  loadCloudState,
+  migrateLocalToCloud,
+} from "../../data/storage/lifeOpsCloud";
 
 import { loadAppData, saveAppData } from "../../data/storage/localStorage";
 
@@ -102,7 +109,8 @@ function gentlePrepSuggestion({ status, tomorrowType }) {
   }
 
   if (tomorrowType === "Office day") return "Small win: decide tomorrow’s first task before bed.";
-  if (tomorrowType === "Uni day") return "Small win: write one sentence on what you want to understand in uni tomorrow.";
+  if (tomorrowType === "Uni day")
+    return "Small win: write one sentence on what you want to understand in uni tomorrow.";
   if (tomorrowType === "Groundhop day") return "Small win: check kickoff time and your travel plan once.";
   return "Small win: choose one simple routine to keep steady tomorrow.";
 }
@@ -111,7 +119,8 @@ function copingSuggestionFor({ status, dayType }) {
   if (status === "red") return "Reduce stimulation (headphones / dim screen) + open Support if needed.";
 
   if (status === "amber") {
-    if (dayType === "Office day") return "Before leaving: headphones + one calm breath + check your exit plan.";
+    if (dayType === "Office day")
+      return "Before leaving: headphones + one calm breath + check your exit plan.";
     if (dayType === "Uni day") return "Open the uni link now and set a 15-minute timer (stop when it ends).";
     if (dayType === "Remote work day") return "2-minute reset: water + stand up + choose only 1 next task.";
     if (dayType === "Groundhop day") return "Prep calm: charge phone + check ticket + plan a quiet food stop.";
@@ -133,13 +142,14 @@ function safeId() {
 
 // -------------------- Home --------------------
 export default function Home() {
-   const { user, authLoading } = useAuth();
+  const { user, authLoading } = useAuth();
 
   // prevents “cloud snapshot -> setState -> save -> overwrite cloud” loops
   const applyingRemote = useRef(false);
 
   // one-time migration: if cloud is empty but local has data, upload it once
   const migratedOnce = useRef(false);
+
   function defaultDayTypeFor(key) {
     const d = keyToDate(key);
     const dow = d.getDay(); // 0 Sun ... 6 Sat
@@ -151,9 +161,6 @@ export default function Home() {
   }
 
   const lastCloudJSON = useRef("");
-const skipNextCloudSave = useRef(false);
-const lastSavedJSON = useRef("");
-const skipCloudSavesFor = useRef(0);
 
   // ----- Per-day storage -----
   const [tasksByDate, setTasksByDate] = useState({});
@@ -203,13 +210,12 @@ const skipCloudSavesFor = useRef(0);
     notes: "",
   });
 
-  // ✅ hydration guard (prevents overwriting saved data on mount)
+  // ✅ hydration guard
   const [hydrated, setHydrated] = useState(false);
 
   // Swipe support refs
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
-  const saveTimer = useRef(null);
 
   // ----- Derived -----
   const selectedTasks = tasksByDate[selectedKey] ?? [];
@@ -389,7 +395,6 @@ const skipCloudSavesFor = useRef(0);
     setUpcomingEditorOpen(true);
   }
 
-  // ✅ hardened: always treats prev as an array
   function saveUpcomingDraft() {
     const cleaned = {
       type: (upcomingDraft.type || "other").trim(),
@@ -408,10 +413,7 @@ const skipCloudSavesFor = useRef(0);
         return list.map((x) => (x.id === upcomingEditId ? { ...x, ...cleaned } : x));
       }
 
-      return [
-        { id: safeId(), ...cleaned, createdAt: Date.now() },
-        ...list,
-      ];
+      return [{ id: safeId(), ...cleaned, createdAt: Date.now() }, ...list];
     });
 
     setUpcomingEditorOpen(false);
@@ -422,40 +424,39 @@ const skipCloudSavesFor = useRef(0);
     setUpcomingItems((prev) => (Array.isArray(prev) ? prev.filter((x) => x.id !== id) : []));
   }
 
-    // ----- Load & Sync -----
+  // ----- Load & Sync -----
   useEffect(() => {
     if (authLoading) return;
 
-    // Helper: apply a saved object to state (shared by local + cloud)
     function applySaved(saved) {
       if (!saved) return;
 
-      const { updatedAt, ...clean } = saved;
-saved = clean;
+      const { updatedAt, migratedAt, ...clean } = saved;
+      const data = clean;
 
-      if (saved.tasksByDate) setTasksByDate(saved.tasksByDate);
-      if (saved.promptByDate) setPromptByDate(saved.promptByDate);
-      if (saved.statusByDate) setStatusByDate(saved.statusByDate);
-      if (saved.supportPlanByStatus) setSupportPlanByStatus(saved.supportPlanByStatus);
-      if (saved.dayTypeByDate) setDayTypeByDate(saved.dayTypeByDate);
-      if (saved.prepDoneByDate) setPrepDoneByDate(saved.prepDoneByDate);
-      if (saved.copingDoneByDate) setCopingDoneByDate(saved.copingDoneByDate);
-      if (saved.copingPickByDate) setCopingPickByDate(saved.copingPickByDate);
-      if (saved.supportShownByDate) setSupportShownByDate(saved.supportShownByDate);
-      if (saved.quickCheckByDate) setQuickCheckByDate(saved.quickCheckByDate);
+      if (data.tasksByDate) setTasksByDate(data.tasksByDate);
+      if (data.promptByDate) setPromptByDate(data.promptByDate);
+      if (data.statusByDate) setStatusByDate(data.statusByDate);
+      if (data.supportPlanByStatus) setSupportPlanByStatus(data.supportPlanByStatus);
+      if (data.dayTypeByDate) setDayTypeByDate(data.dayTypeByDate);
+      if (data.prepDoneByDate) setPrepDoneByDate(data.prepDoneByDate);
+      if (data.copingDoneByDate) setCopingDoneByDate(data.copingDoneByDate);
+      if (data.copingPickByDate) setCopingPickByDate(data.copingPickByDate);
+      if (data.supportShownByDate) setSupportShownByDate(data.supportShownByDate);
+      if (data.quickCheckByDate) setQuickCheckByDate(data.quickCheckByDate);
 
-      if (saved.weeklyByWeekKey) setWeeklyByWeekKey(saved.weeklyByWeekKey);
-      if (saved.weeklyChecklistByWeekKey) setWeeklyChecklistByWeekKey(saved.weeklyChecklistByWeekKey);
-      if (saved.weeklyReviewByWeekKey) setWeeklyReviewByWeekKey(saved.weeklyReviewByWeekKey);
-      if (typeof saved.showWeeklyChecklist === "boolean") setShowWeeklyChecklist(saved.showWeeklyChecklist);
+      if (data.weeklyByWeekKey) setWeeklyByWeekKey(data.weeklyByWeekKey);
+      if (data.weeklyChecklistByWeekKey) setWeeklyChecklistByWeekKey(data.weeklyChecklistByWeekKey);
+      if (data.weeklyReviewByWeekKey) setWeeklyReviewByWeekKey(data.weeklyReviewByWeekKey);
+      if (typeof data.showWeeklyChecklist === "boolean") setShowWeeklyChecklist(data.showWeeklyChecklist);
 
-      if (saved.nextTrip) setNextTrip(saved.nextTrip);
-      if (saved.nextMatch) setNextMatch(saved.nextMatch);
+      if (data.nextTrip) setNextTrip(data.nextTrip);
+      if (data.nextMatch) setNextMatch(data.nextMatch);
 
-      if (saved.upcomingItems) setUpcomingItems(saved.upcomingItems);
+      if (data.upcomingItems) setUpcomingItems(data.upcomingItems);
     }
 
-    // If not signed in -> behave exactly like before (localStorage)
+    // Local-only mode
     if (!user) {
       const saved = loadAppData() ?? {};
       applySaved(saved);
@@ -463,57 +464,45 @@ saved = clean;
       return;
     }
 
-    // Signed in -> Firestore is source of truth (live sync)
     let unsub = null;
 
     (async () => {
-      // 1) Try to load cloud once (so we can decide migration)
       const cloud = await loadCloudState(user.uid);
-
-      // 2) Load local as a fallback (for first time sign-in)
       const local = loadAppData() ?? {};
 
-      // If cloud empty and local has something meaningful, migrate once
       const localHasData =
-  local &&
-  (
-    (local.upcomingItems && local.upcomingItems.length) ||
-    (local.tasksByDate && Object.keys(local.tasksByDate).length) ||
-    (local.weeklyByWeekKey && Object.keys(local.weeklyByWeekKey).length)
-  );
+        local &&
+        ((local.upcomingItems && local.upcomingItems.length) ||
+          (local.tasksByDate && Object.keys(local.tasksByDate).length) ||
+          (local.weeklyByWeekKey && Object.keys(local.weeklyByWeekKey).length));
 
       if (!cloud && localHasData && !migratedOnce.current) {
         migratedOnce.current = true;
-        await saveCloudState(user.uid, local);
+        await migrateLocalToCloud(user.uid, local);
       }
 
-      // Apply whichever exists (cloud preferred)
- applyingRemote.current = true;
-skipCloudSavesFor.current = 3; // skip next ~3 renders caused by applySaved
-applySaved(cloud || local);
-setTimeout(() => {
-  applyingRemote.current = false;
-}, 0);
+      applyingRemote.current = true;
+      applySaved(cloud || local);
+      setTimeout(() => {
+        applyingRemote.current = false;
+      }, 0);
 
       setHydrated(true);
 
-      // 3) Subscribe to live updates (phone <-> computer sync)
-unsub = subscribeCloudState(user.uid, (nextCloud) => {
-  if (!nextCloud) return;
+      unsub = subscribeCloudState(user.uid, (nextCloud) => {
+        if (!nextCloud) return;
 
-  const { updatedAt, ...rest } = nextCloud;
-  const json = JSON.stringify(rest);
+        const { updatedAt, migratedAt, ...rest } = nextCloud;
+        const json = JSON.stringify(rest);
+        if (json === lastCloudJSON.current) return;
+        lastCloudJSON.current = json;
 
-  if (json === lastCloudJSON.current) return;
-  lastCloudJSON.current = json;
-
- applyingRemote.current = true;
-skipCloudSavesFor.current = 3;
-applySaved(rest);
-setTimeout(() => {
-  applyingRemote.current = false;
-}, 0);
-});
+        applyingRemote.current = true;
+        applySaved(rest);
+        setTimeout(() => {
+          applyingRemote.current = false;
+        }, 0);
+      });
     })();
 
     return () => {
@@ -521,13 +510,44 @@ setTimeout(() => {
     };
   }, [user, authLoading]);
 
+  // ----- Save on change (AFTER hydration) -----
+  useEffect(() => {
+    if (!hydrated) return;
 
-    // ----- Save on change (AFTER hydration) -----
-useEffect(() => {
-  if (!hydrated) return;
+    const payload = {
+      tasksByDate,
+      promptByDate,
+      statusByDate,
+      supportPlanByStatus,
+      dayTypeByDate,
+      prepDoneByDate,
+      copingDoneByDate,
+      copingPickByDate,
+      supportShownByDate,
+      quickCheckByDate,
 
+      weeklyByWeekKey,
+      weeklyChecklistByWeekKey,
+      weeklyReviewByWeekKey,
+      showWeeklyChecklist,
 
-  const payload = {
+      nextTrip,
+      nextMatch,
+      upcomingItems,
+    };
+
+    // Always save locally
+    saveAppData(payload);
+
+    // Cloud save only if signed in and not applying remote
+    if (!user) return;
+    if (applyingRemote.current) return;
+
+    saveCloudState(user.uid, payload);
+  }, [
+    hydrated,
+    user,
+
     tasksByDate,
     promptByDate,
     statusByDate,
@@ -547,60 +567,7 @@ useEffect(() => {
     nextTrip,
     nextMatch,
     upcomingItems,
-  };
-
-  // Always save locally immediately (fast + offline safe)
-  saveAppData(payload);
-
-  // If this render was caused by applying Firestore -> do NOT write back
-if (skipNextCloudSave.current) {
-  skipNextCloudSave.current = false;
-  return;
-}
-
-const json = JSON.stringify(payload);
-if (json === lastSavedJSON.current) return;
-lastSavedJSON.current = json;
-
-  // 🔥 Debounced Firestore save
-  if (user && !applyingRemote.current) {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-
-    saveTimer.current = setTimeout(() => {
-      saveCloudState(user.uid, payload);
-    }, 800); // wait 800ms after last change
-  }
-
-  // Cleanup if component rerenders quickly
-  return () => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-  };
-}, [
-  hydrated,
-  user,
-
-  tasksByDate,
-  promptByDate,
-  statusByDate,
-  supportPlanByStatus,
-  dayTypeByDate,
-  prepDoneByDate,
-  copingDoneByDate,
-  copingPickByDate,
-  supportShownByDate,
-  quickCheckByDate,
-
-  weeklyByWeekKey,
-  weeklyChecklistByWeekKey,
-  weeklyReviewByWeekKey,
-  showWeeklyChecklist,
-
-  nextTrip,
-  nextMatch,
-  upcomingItems,
-]);
-
-
+  ]);
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
   useEffect(() => {
@@ -633,16 +600,30 @@ lastSavedJSON.current = json;
   return (
     <div className="max-w-md p-4 space-y-4">
       {/* Header */}
-
-      {user ? (
-  <div className="text-xs opacity-70 mt-1">Synced to Firebase: {user.email}</div>
-) : (
-  <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
-)}
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-purple">Life Ops</h1>
-
         <div className="text-xs opacity-60">BUILD: 2026-01-27-A</div>
+
+        {user ? (
+          <>
+            <div className="text-xs opacity-70 mt-1">Synced to Firebase: {user.email}</div>
+
+            {user.email === "kcco1996@gmail.com" && (
+              <button
+                className="w-full mt-2 rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+                onClick={async () => {
+                  const local = loadAppData() ?? {};
+                  await migrateLocalToCloud(user.uid, local);
+                  alert("Migrated local data to Firebase ✅");
+                }}
+              >
+                Migrate local data to Firebase
+              </button>
+            )}
+          </>
+        ) : (
+          <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
+        )}
 
         <div className="mt-2 space-y-2">
           <div
@@ -832,7 +813,7 @@ lastSavedJSON.current = json;
         </div>
       </div>
 
-      {/* Weekly priorities (editable, persisted) */}
+      {/* Weekly priorities */}
       <div className="rounded-2xl border border-white/10 bg-card p-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold opacity-90">Weekly priorities</div>
@@ -876,7 +857,7 @@ lastSavedJSON.current = json;
         </div>
       </div>
 
-      {/* Weekly review (editable, persisted) */}
+      {/* Weekly review */}
       <div className="rounded-2xl border border-white/10 bg-card p-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold opacity-90">Weekly review</div>
@@ -944,103 +925,7 @@ lastSavedJSON.current = json;
         </div>
       </div>
 
-      {/* Next trip (persisted) */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold opacity-90">Next trip</div>
-          {canEdit && (
-            <button
-              className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-              onClick={() => setNextTrip({ title: "", date: "", location: "", notes: "" })}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-
-        <div className="mt-3 space-y-2">
-          <input
-            value={nextTrip.title}
-            disabled={!canEdit}
-            onChange={(e) => setNextTrip((p) => ({ ...p, title: e.target.value }))}
-            placeholder="Trip name (e.g., Vienna weekend)"
-            className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-          />
-          <div className="flex gap-2">
-            <input
-              value={nextTrip.date}
-              disabled={!canEdit}
-              onChange={(e) => setNextTrip((p) => ({ ...p, date: e.target.value }))}
-              placeholder="Date (e.g., 2026-02-12)"
-              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-            />
-            <input
-              value={nextTrip.location}
-              disabled={!canEdit}
-              onChange={(e) => setNextTrip((p) => ({ ...p, location: e.target.value }))}
-              placeholder="Location"
-              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-            />
-          </div>
-          <textarea
-            value={nextTrip.notes}
-            disabled={!canEdit}
-            onChange={(e) => setNextTrip((p) => ({ ...p, notes: e.target.value }))}
-            placeholder="Notes (hotel, travel time, key things to do)"
-            className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-          />
-        </div>
-      </div>
-
-      {/* Next match (persisted) */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold opacity-90">Next match</div>
-          {canEdit && (
-            <button
-              className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-              onClick={() => setNextMatch({ fixture: "", date: "", ground: "", notes: "" })}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-
-        <div className="mt-3 space-y-2">
-          <input
-            value={nextMatch.fixture}
-            disabled={!canEdit}
-            onChange={(e) => setNextMatch((p) => ({ ...p, fixture: e.target.value }))}
-            placeholder="Fixture (e.g., West Ham vs __)"
-            className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-          />
-          <div className="flex gap-2">
-            <input
-              value={nextMatch.date}
-              disabled={!canEdit}
-              onChange={(e) => setNextMatch((p) => ({ ...p, date: e.target.value }))}
-              placeholder="Date (e.g., 2026-02-01)"
-              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-            />
-            <input
-              value={nextMatch.ground}
-              disabled={!canEdit}
-              onChange={(e) => setNextMatch((p) => ({ ...p, ground: e.target.value }))}
-              placeholder="Ground"
-              className="flex-1 rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-            />
-          </div>
-          <textarea
-            value={nextMatch.notes}
-            disabled={!canEdit}
-            onChange={(e) => setNextMatch((p) => ({ ...p, notes: e.target.value }))}
-            placeholder="Notes (travel, ticket, stand/seat plan)"
-            className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60 disabled:opacity-60"
-          />
-        </div>
-      </div>
-
-      {/* Weekly checklist (persisted) */}
+      {/* Weekly checklist */}
       {showWeeklyChecklist && (
         <div className="rounded-2xl border border-white/10 bg-card p-4">
           <div className="flex items-center justify-between">
@@ -1085,10 +970,9 @@ lastSavedJSON.current = json;
         </div>
       )}
 
-      {/* Extras hidden only on Red+Reduced or bare */}
+      {/* Extras */}
       {showExtras && (
         <div className="space-y-4">
-          {/* Today tasks (persisted per day by TodayCard using props) */}
           <TodayCard
             dateKey={selectedKey}
             tasks={selectedTasks}
@@ -1096,7 +980,7 @@ lastSavedJSON.current = json;
             readOnly={!canEdit}
           />
 
-          {/* Status sliders (persisted) */}
+          {/* Status sliders */}
           <div className="rounded-2xl border border-white/10 bg-card p-4">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold opacity-90">Status</div>
@@ -1128,7 +1012,10 @@ lastSavedJSON.current = json;
                         const nextVal = Number(e.target.value);
                         setQuickCheckByDate((prev) => ({
                           ...(prev ?? {}),
-                          [selectedKey]: { ...(prev?.[selectedKey] ?? { energy: 2, focus: 2, stress: 3 }), [row.key]: nextVal },
+                          [selectedKey]: {
+                            ...(prev?.[selectedKey] ?? { energy: 2, focus: 2, stress: 3 }),
+                            [row.key]: nextVal,
+                          },
                         }));
                       }}
                       className="w-full"
@@ -1139,7 +1026,7 @@ lastSavedJSON.current = json;
             </div>
           </div>
 
-          {/* Upcoming (persisted + add/edit/delete) */}
+          {/* Upcoming */}
           <div className="rounded-2xl border border-white/10 bg-card p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -1157,7 +1044,6 @@ lastSavedJSON.current = json;
               )}
             </div>
 
-            {/* Editor */}
             {upcomingEditorOpen && (
               <div className="mt-3 rounded-2xl bg-card2 p-3 space-y-2">
                 <div className="flex gap-2">
@@ -1232,7 +1118,6 @@ lastSavedJSON.current = json;
               </div>
             )}
 
-            {/* List */}
             <div className="mt-3 space-y-2">
               {upcomingSorted.length === 0 ? (
                 <div className="text-sm opacity-70">No upcoming items yet.</div>
@@ -1242,7 +1127,9 @@ lastSavedJSON.current = json;
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold">
-                          <span className="opacity-70 mr-2">{(item.type || "other").toUpperCase()}</span>
+                          <span className="opacity-70 mr-2">
+                            {(item.type || "other").toUpperCase()}
+                          </span>
                           {item.title || "Untitled"}
                         </div>
                         {(item.date || item.location) && (
@@ -1272,13 +1159,15 @@ lastSavedJSON.current = json;
                       )}
                     </div>
 
-                    {item.notes && <div className="text-sm opacity-80 whitespace-pre-wrap">{item.notes}</div>}
+                    {item.notes && (
+                      <div className="text-sm opacity-80 whitespace-pre-wrap">{item.notes}</div>
+                    )}
                   </div>
                 ))
               )}
 
               {upcomingSorted.length > 12 && (
-                <div className="text-xs opacity-60">Showing first 12 items. (We can add a “show all” later.)</div>
+                <div className="text-xs opacity-60">Showing first 12 items.</div>
               )}
             </div>
           </div>
@@ -1338,7 +1227,6 @@ lastSavedJSON.current = json;
       )}
 
       {/* Sheets */}
-          {/* Sheets */}
       <SupportSheet
         open={supportOpen}
         onClose={() => setSupportOpen(false)}
