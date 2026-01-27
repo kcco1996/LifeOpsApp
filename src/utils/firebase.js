@@ -1,38 +1,30 @@
 // src/utils/firebase.js
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { initializeApp, getApps } from "firebase/app";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
 
 const firebaseConfig = {
-  // your config...
+  apiKey: "AIzaSyAtse4bJY8v6jm48O5kD77KeFVjEVSnyCA",
+  authDomain: "lifeops-95978.firebaseapp.com",
+  projectId: "lifeops-95978",
+  storageBucket: "lifeops-95978.firebasestorage.app",
+  messagingSenderId: "81691339428",
+  appId: "1:81691339428:web:9722857815dda3e7971431",
 };
 
-let app;
-let db;
-let auth;
+// ✅ avoids double-init (important with Vite/PWA/HMR)
+export const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 
-export function getFirebase() {
-  if (!app) app = initializeApp(firebaseConfig);
-  if (!db) db = getFirestore(app);
-  if (!auth) auth = getAuth(app);
+export const auth = getAuth(app);
+export const provider = new GoogleAuthProvider();
 
-  return { app, db, auth };
-}
-
-export const dbProxy = new Proxy(
-  {},
-  {
-    get(_t, prop) {
-      return getFirebase().db[prop];
-    },
-  }
-);
-
-export const authProxy = new Proxy(
-  {},
-  {
-    get(_t, prop) {
-      return getFirebase().auth[prop];
-    },
-  }
-);
+// ✅ modern persistence (replaces enableIndexedDbPersistence)
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+});

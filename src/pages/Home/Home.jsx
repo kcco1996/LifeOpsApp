@@ -25,6 +25,8 @@ import { subscribeCloudState, saveCloudState, loadCloudState, migrateLocalToClou
 
 import { loadAppData, saveAppData } from "../../data/storage/localStorage";
 
+import { migrateLocalToCloud } from "../../data/storage/lifeOpsCloud";
+
 // -------------------- Date helpers --------------------
 function todayKey() {
   const d = new Date();
@@ -634,6 +636,19 @@ useEffect(() => {
 
       {user ? (
   <div className="text-xs opacity-70 mt-1">Synced to Firebase: {user.email}</div>
+
+  {user && user.email === "kcco1996@gmail.com" && (
+  <button
+    className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+    onClick={async () => {
+      const local = loadAppData() ?? {};
+      await migrateLocalToCloud(user.uid, local);
+      alert("Migrated local data to Firebase ✅");
+    }}
+  >
+    Migrate local data to Firebase
+  </button>
+)}
   
 ) : (
   <div className="text-xs opacity-70 mt-1">Not signed in (saving locally)</div>
