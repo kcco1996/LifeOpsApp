@@ -153,6 +153,7 @@ export default function Home() {
   const lastCloudJSON = useRef("");
 const skipNextCloudSave = useRef(false);
 const lastSavedJSON = useRef("");
+const skipCloudSavesFor = useRef(0);
 
   // ----- Per-day storage -----
   const [tasksByDate, setTasksByDate] = useState({});
@@ -487,10 +488,12 @@ saved = clean;
       }
 
       // Apply whichever exists (cloud preferred)
-     applyingRemote.current = true;
-skipNextCloudSave.current = true;
+ applyingRemote.current = true;
+skipCloudSavesFor.current = 3; // skip next ~3 renders caused by applySaved
 applySaved(cloud || local);
-applyingRemote.current = false;
+setTimeout(() => {
+  applyingRemote.current = false;
+}, 0);
 
       setHydrated(true);
 
@@ -504,10 +507,12 @@ unsub = subscribeCloudState(user.uid, (nextCloud) => {
   if (json === lastCloudJSON.current) return;
   lastCloudJSON.current = json;
 
-  applyingRemote.current = true;
-  skipNextCloudSave.current = true;
-  applySaved(rest);
+ applyingRemote.current = true;
+skipCloudSavesFor.current = 3;
+applySaved(rest);
+setTimeout(() => {
   applyingRemote.current = false;
+}, 0);
 });
     })();
 
