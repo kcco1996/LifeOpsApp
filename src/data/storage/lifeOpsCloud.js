@@ -14,35 +14,28 @@ let pendingUid = null;
 let pendingState = null;
 let lastSavedHashByUid = new Map();
 
-// stable-ish hash (good enough for client-side dedupe)
-function hashState(state) {
-  // Avoid hashing serverTimestamp / functions
-  try {
-    return JSON.stringify(state, Object.keys(state).sort());
-  } catch {
-    // If state contains non-serializable stuff, fall back to a time-based hash
-    return String(Date.now());
-  }
-}
-
-export async function loadCloudState(uid) {
-  const snap = await getDoc(refFor(uid));
-  return snap.exists() ? snap.data() : null;
-}
-
+// -------------------- Stable hashing (dedupe) --------------------
+// We ignore metadata keys that change every write (updatedAt, migratedAt).
+// We also make Firestore Timestamp stable via toMillis().
 function stableStringify(value) {
+  // Firestore Timestamp -> stable primitive
+  if (value && typeof value === "object" && typeof value.toMillis === "function") {
+    return JSON.stringify({ __ts: value.toMillis() });
+  }
+
   if (value === null || typeof value !== "object") return JSON.stringify(value);
 
   if (Array.isArray(value)) {
     return "[" + value.map(stableStringify).join(",") + "]";
   }
 
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value)
+    .filter((k) => k !== "updatedAt" && k !== "migratedAt")
+    .sort();
+
   return (
     "{" +
-    keys
-      .map((k) => JSON.stringify(k) + ":" + stableStringify(value[k]))
-      .join(",") +
+    keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") +
     "}"
   );
 }
@@ -55,6 +48,11 @@ function hashState(state) {
   }
 }
 
+// -------------------- Public API --------------------
+export async function loadCloudState(uid) {
+  const snap = await getDoc(refFor(uid));
+  return snap.exists() ? snap.data() : null;
+}
 
 /**
  * Debounced + deduped save.
@@ -74,18 +72,21 @@ export async function migrateLocalToCloud(uid, localState) {
   await setDoc(
     refFor(uid),
     {
-      ...localState,
+      ...(localState ?? {}),
       migratedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
 
-  // Seed hash so you don't immediately re-save the same payload after migrating
-  lastSavedHashByUid.set(uid, hashState(localState));
+  // Seed hash (metadata ignored by hashState anyway, but keep consistent)
+  const { updatedAt, migratedAt, ...rest } = localState ?? {};
+  lastSavedHashByUid.set(uid, hashState(rest));
 }
 
 export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
+  if (!uid) return;
+
   // If we recently hit quota, don't keep hammering Firestore.
   if (Date.now() < cloudWriteDisabledUntil) return;
 
@@ -94,7 +95,6 @@ export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
 
   // If unchanged vs last successful save, skip completely.
   if (lastHash && lastHash === nextHash) return;
-  
 
   // Queue latest payload
   pendingUid = uid;
@@ -119,7 +119,7 @@ export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
     try {
       await setDoc(
         refFor(writeUid),
-        { ...writeState, updatedAt: serverTimestamp() },
+        { ...(writeState ?? {}), updatedAt: serverTimestamp() },
         { merge: true }
       );
       lastCloudWriteError = null;
@@ -142,24 +142,24 @@ export function saveCloudState(uid, state, { delayMs = 800 } = {}) {
 }
 
 export function subscribeCloudState(uid, onChange) {
-  return onSnapshot(
-    refFor(uid),
-    { includeMetadataChanges: true },
-    (snap) => {
-      if (!snap.exists()) return;
+  if (!uid) return () => {};
 
-      // Ignore “local echo”
-      if (snap.metadata.hasPendingWrites) return;
+  // NOTE: we don't need includeMetadataChanges:true if we already ignore hasPendingWrites.
+  return onSnapshot(refFor(uid), (snap) => {
+    if (!snap.exists()) return;
 
-      const data = snap.data();
+    // Ignore “local echo”
+    if (snap.metadata.hasPendingWrites) return;
 
-      // Seed lastSavedHash so we don't immediately write back what we just read
-      const h = hashState(data);
-      lastSavedHashByUid.set(uid, h);
+    const data = snap.data();
 
-      onChange(data);
-    }
-  );
+    // Seed lastSavedHash so we don't immediately write back what we just read.
+    // Strip metadata keys so this matches hashing used for writes.
+    const { updatedAt, migratedAt, ...rest } = data ?? {};
+    lastSavedHashByUid.set(uid, hashState(rest));
+
+    onChange(data);
+  });
 }
 
 export function getCloudWriteStatus() {
@@ -168,5 +168,3 @@ export function getCloudWriteStatus() {
     lastError: lastCloudWriteError,
   };
 }
-
- 
