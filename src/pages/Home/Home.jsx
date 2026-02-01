@@ -19,6 +19,7 @@ import GentlePrepCard from "../../components/Cards/GentlePrepCard";
 import SupportSheet from "../../components/Sheets/SupportSheet";
 import PlanEditorSheet from "../../components/Sheets/PlanEditorSheet";
 import DayTypeEditorSheet from "../../components/Sheets/DayTypeEditorSheet";
+import { upsertDailyEntry } from "../../data/storage/historyDaily";
 
 import { useAuth } from "../../hooks/useAuth";
 
@@ -590,6 +591,77 @@ export default function Home() {
     nextMatch,
     upcomingItems,
   ]);
+
+  // ----- Daily History (debounced, safe) -----
+useEffect(() => {
+  if (!hydrated) return;
+
+  // Only log days the user can edit (today/future)
+  if (!canEdit) return;
+
+  // Debounce: avoid writing history on every keystroke
+  const id = setTimeout(() => {
+    // Map your app's amber -> history's yellow (optional but makes filters intuitive)
+    const traffic = selectedStatus === "amber" ? "yellow" : selectedStatus;
+
+    // Create a small, meaningful snapshot (do NOT store huge objects)
+    upsertDailyEntry({
+      day: selectedKey,
+
+      trafficLight: traffic,
+      status: traffic, // keep simple for now; you can expand later
+
+      copingMethod: pickedCoping || "",
+      oneQuestion: selectedAnswer || "",
+      gentlePrep: prepSuggestion || "",
+
+      weeklyFocus:
+        weeklyPriorities
+          .map((x) => (x || "").trim())
+          .filter(Boolean)
+          .slice(0, 1)[0] || "",
+
+      weeklyPriorities: weeklyPriorities
+        .map((x) => (x || "").trim())
+        .filter(Boolean)
+        .slice(0, 6),
+
+      weeklyChecklist: ensureNRows(weeklyChecklist?.items, 6)
+        .map((x) => (x || "").trim())
+        .filter(Boolean)
+        .slice(0, 6),
+
+      todoTodayCount: Array.isArray(selectedTasks) ? selectedTasks.length : 0,
+      upcomingCount: Array.isArray(upcomingItems) ? upcomingItems.length : 0,
+
+      // Optional: store quick check numbers (small & useful)
+      quickCheck: {
+        energy: quickCheck?.energy ?? 2,
+        focus: quickCheck?.focus ?? 2,
+        stress: quickCheck?.stress ?? 3,
+      },
+    });
+  }, 900);
+
+  return () => clearTimeout(id);
+}, [
+  hydrated,
+  canEdit,
+  selectedKey,
+
+  selectedStatus,
+  pickedCoping,
+  selectedAnswer,
+  prepSuggestion,
+
+  weeklyPriorities,
+  weeklyChecklist,
+  selectedTasks,
+  upcomingItems,
+
+  quickCheck,
+]);
+
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
   useEffect(() => {
