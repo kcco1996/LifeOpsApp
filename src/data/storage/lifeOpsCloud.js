@@ -179,9 +179,6 @@ export function getCloudWriteStatus() {
   };
 }
 
-import { db } from "../../utils/firebase";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-
 // Example: store everything under /users/{uid}/lifeOps/snapshot
 export async function exportCloudSnapshot(uid) {
   const ref = doc(db, "users", uid, "lifeOps", "snapshot");
