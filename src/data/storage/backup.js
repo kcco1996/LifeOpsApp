@@ -1,72 +1,29 @@
 // src/data/storage/backup.js
-const APP_PREFIX = "lifeops:";
+import { loadAppData, saveAppData } from "./localStorage";
+import { getDailyHistory, setDailyHistory } from "./historyDaily";
 
 /**
- * Export ONLY this app's localStorage keys.
- * Safe even if user has other apps on same domain.
+ * Backup format:
+ * {
+ *   meta: { app, version, createdAt },
+ *   appState: {...},
+ *   dailyHistory: [...]
+ * }
  */
-export function exportLocalStorageSnapshot() {
-  const keys = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (!k) continue;
-    if (k.startsWith(APP_PREFIX)) {
-      keys[k] = localStorage.getItem(k);
-    }
-  }
 
-  return {
-    meta: {
-      app: "life-ops",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      scope: "localStorage",
-      prefix: APP_PREFIX,
-    },
-    local: { keys },
-  };
+const BACKUP_APP = "life-ops";
+const BACKUP_VERSION = 1;
+
+function safeParseJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
-/**
- * Restore a snapshot into localStorage.
- * options:
- *  - mode: "replace" (default) clears existing app keys first
- *          "merge" keeps existing keys and overwrites only included ones
- */
-export function importLocalStorageSnapshot(snapshot, options = { mode: "replace" }) {
-  if (!snapshot?.meta?.app || snapshot.meta.app !== "life-ops") {
-    throw new Error("This backup file is not for Life Ops.");
-  }
-  if (!snapshot?.local?.keys || typeof snapshot.local.keys !== "object") {
-    throw new Error("Backup file is missing local keys.");
-  }
-
-  const mode = options?.mode ?? "replace";
-
-  if (mode === "replace") {
-    // Clear existing Life Ops keys first
-    const toRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(APP_PREFIX)) toRemove.push(k);
-    }
-    toRemove.forEach((k) => localStorage.removeItem(k));
-  }
-
-  // Write backup keys
-  for (const [k, v] of Object.entries(snapshot.local.keys)) {
-    if (!k.startsWith(APP_PREFIX)) continue; // safety
-    localStorage.setItem(k, v);
-  }
-
-  return true;
-}
-
-/**
- * Utility: download an object as a .json file
- */
-export function downloadJSON(obj, filename = "life-ops-backup.json") {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -77,32 +34,67 @@ export function downloadJSON(obj, filename = "life-ops-backup.json") {
   URL.revokeObjectURL(url);
 }
 
-/**
- * Utility: read a JSON file from an <input type="file" />
- */
-export function readJSONFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not read file."));
-    reader.onload = () => {
-      try {
-        resolve(JSON.parse(String(reader.result)));
-      } catch {
-        reject(new Error("Invalid JSON file."));
-      }
-    };
-    reader.readAsText(file);
-  });
+export function makeBackupObject() {
+  const appState = loadAppData() ?? {};
+  const dailyHistory = getDailyHistory() ?? [];
+
+  return {
+    meta: {
+      app: BACKUP_APP,
+      version: BACKUP_VERSION,
+      createdAt: new Date().toISOString(),
+    },
+    appState,
+    dailyHistory,
+  };
 }
 
-/**
- * Optional helper: clear all Life Ops local keys (useful in Settings).
- */
-export function clearLifeOpsLocalKeys() {
-  const toRemove = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && k.startsWith(APP_PREFIX)) toRemove.push(k);
+export function exportBackupToFile() {
+  const backup = makeBackupObject();
+  const stamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  downloadTextFile(`life-ops-backup-${stamp}.json`, JSON.stringify(backup, null, 2));
+}
+
+export function validateBackupObject(obj) {
+  if (!obj || typeof obj !== "object") return { ok: false, error: "Backup file is not valid JSON." };
+
+  const meta = obj.meta;
+  if (!meta || typeof meta !== "object") return { ok: false, error: "Missing meta section." };
+  if (meta.app !== BACKUP_APP) return { ok: false, error: "This backup is not for Life Ops." };
+
+  // allow future versions but warn
+  if (typeof meta.version !== "number") return { ok: false, error: "Missing backup version." };
+
+  const appState = obj.appState;
+  const dailyHistory = obj.dailyHistory;
+
+  if (appState && typeof appState !== "object") {
+    return { ok: false, error: "appState must be an object." };
   }
-  toRemove.forEach((k) => localStorage.removeItem(k));
+  if (dailyHistory && !Array.isArray(dailyHistory)) {
+    return { ok: false, error: "dailyHistory must be an array." };
+  }
+
+  return { ok: true };
+}
+
+export async function importBackupFromFile(file) {
+  const text = await file.text();
+  const parsed = safeParseJSON(text);
+
+  const v = validateBackupObject(parsed);
+  if (!v.ok) throw new Error(v.error);
+
+  // Restore local stores through your existing helpers
+  saveAppData(parsed.appState ?? {});
+  setDailyHistory(Array.isArray(parsed.dailyHistory) ? parsed.dailyHistory : []);
+
+  // Reload so Home rehydrates cleanly and cloud logic doesn’t fight it
+  window.location.reload();
+}
+
+export function resetAllLocalData() {
+  saveAppData({});
+  setDailyHistory([]);
+  window.location.reload();
 }

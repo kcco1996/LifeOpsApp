@@ -1,92 +1,89 @@
 // src/pages/Support/Support.jsx
-import React, { useState } from "react";
-
-function Section({ title, children }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12, marginTop: 12 }}>
-      <button
-        onClick={() => setOpen(!open)}
-        style={{
-          width: "100%",
-          textAlign: "left",
-          background: "transparent",
-          border: "none",
-          cursor: "pointer",
-          fontSize: 16,
-          fontWeight: 600,
-        }}
-      >
-        {title} {open ? "▲" : "▼"}
-      </button>
-      {open ? <div style={{ marginTop: 10, lineHeight: 1.5 }}>{children}</div> : null}
-    </div>
-  );
-}
+import { exportBackupToFile } from "../../data/storage/backup";
 
 export default function Support() {
   return (
-    <div style={{ padding: 16, maxWidth: 900 }}>
-      <h1>Support</h1>
-      <p style={{ marginTop: 8 }}>
-        Life Ops is designed to reduce overwhelm and help you choose the right level of effort for the day.
-        You don’t need to fill everything in.
-      </p>
+    <div className="max-w-md p-4 space-y-4">
+      <h1 className="text-3xl font-bold tracking-tight text-purple">Support</h1>
 
-      <Section title="What each tool is for">
-        <ul>
-          <li><b>Check-in traffic light:</b> green = capacity, yellow = limited, red = low capacity.</li>
-          <li><b>Coping method:</b> the quickest regulation action you can actually do.</li>
-          <li><b>Brain in hand:</b> emergency reset when overwhelmed.</li>
-          <li><b>One question:</b> a single focusing prompt to stop spirals.</li>
-          <li><b>Gentle prep:</b> start small, build momentum safely.</li>
-          <li><b>This week’s focus:</b> your anchor. Everything else is optional noise.</li>
-          <li><b>Weekly priorities:</b> the 2–5 most important outcomes.</li>
-          <li><b>Weekly reviews:</b> learning loop, not judgement.</li>
-          <li><b>Weekly checklist:</b> stability habits.</li>
-          <li><b>To do today:</b> only today. Keep it short.</li>
-          <li><b>Status:</b> your current load and steadiness.</li>
-          <li><b>Upcoming:</b> awareness without overwhelm.</li>
+      {/* Quick help */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
+        <div className="text-sm font-semibold opacity-90">How to use Life Ops</div>
+        <ul className="text-sm opacity-80 list-disc pl-5 space-y-1">
+          <li><b>Green</b>: keep momentum — pick one thing to maintain.</li>
+          <li><b>Amber</b>: protect energy — reduce scope, pick a support.</li>
+          <li><b>Red</b>: safety + simplicity — use Support, reduce screen, do the smallest safe step.</li>
         </ul>
-      </Section>
+        <div className="text-xs opacity-60">
+          Your goal is stability, not perfection.
+        </div>
+      </div>
 
-      <Section title="What to do when you feel overwhelmed">
-        <ol>
-          <li>Press <b>Brain in hand</b>.</li>
-          <li>Set the traffic light honestly (especially if red).</li>
-          <li>Pick one <b>coping method</b> and do it now.</li>
-          <li>Only choose <b>one</b> small task from “To do today”.</li>
-          <li>Ignore the rest until you feel steadier.</li>
-        </ol>
-      </Section>
-
-      <Section title="Weekly review guidance">
-        <ul>
-          <li><b>This week’s wins:</b> proof you showed up.</li>
-          <li><b>What drained me:</b> find repeat offenders.</li>
-          <li><b>What helped:</b> identify what actually works.</li>
-          <li><b>One tweak:</b> change one thing only.</li>
+      {/* Red day support */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
+        <div className="text-sm font-semibold opacity-90">Red day mode</div>
+        <div className="text-sm opacity-80">
+          If you hit Red, the app keeps things simple. Use:
+        </div>
+        <ul className="text-sm opacity-80 list-disc pl-5 space-y-1">
+          <li><b>Support</b> sheet</li>
+          <li><b>Reduce screen</b> or <b>Bare</b> mode</li>
+          <li>One tiny task only (or none)</li>
         </ul>
-      </Section>
+      </div>
 
-      <Section title="Backup & restore">
-        <p>
-          Your data can be backed up from <b>Settings → Backup & Restore</b>.
-          Download a JSON backup occasionally (especially before big changes).
-        </p>
-        <p>
-          If anything looks missing, check you’re signed in to the correct account and restore your most recent backup.
-        </p>
-      </Section>
+      {/* Data & privacy */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
+        <div className="text-sm font-semibold opacity-90">Your data</div>
+        <div className="text-sm opacity-80">
+          - If not signed in: everything saves <b>locally</b> on this device.<br />
+          - If signed in: your main state also syncs to <b>Firebase</b>.<br />
+          - Daily History is stored locally (unless you later choose to sync it).
+        </div>
 
-      <Section title="If something isn’t saving">
-        <ol>
-          <li>Refresh the page.</li>
-          <li>Check you’re signed in (Settings).</li>
-          <li>Try another browser/device.</li>
-          <li>Restore from your latest backup file.</li>
-        </ol>
-      </Section>
+        <button
+          className="w-full mt-2 rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+          onClick={exportBackupToFile}
+        >
+          Export backup (.json)
+        </button>
+
+        <div className="text-xs opacity-60">
+          Tip: export a backup before major edits or refactors.
+        </div>
+      </div>
+
+      {/* Troubleshooting */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
+        <div className="text-sm font-semibold opacity-90">Troubleshooting</div>
+
+        <div className="text-sm opacity-80">
+          <b>History page is empty</b><br />
+          Use Home normally (change status / type a note) and wait ~1 second. Then return to History.
+        </div>
+
+        <div className="text-sm opacity-80">
+          <b>Sync feels delayed</b><br />
+          If Firebase hit quota/network issues, writes can pause briefly. Check Settings → Sync.
+        </div>
+
+        <div className="text-sm opacity-80">
+          <b>I’m worried about losing data</b><br />
+          Export a backup in Settings, then you can restore it anytime.
+        </div>
+      </div>
+
+      {/* Safety note */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
+        <div className="text-sm font-semibold opacity-90">Safety note</div>
+        <div className="text-sm opacity-80">
+          Life Ops is not medical advice. If you feel unsafe or in danger, contact emergency services
+          or a trusted person immediately.
+        </div>
+        <div className="text-xs opacity-60">
+          UK: 999 (emergency) • 111 (non-emergency medical)
+        </div>
+      </div>
     </div>
   );
 }
