@@ -8,6 +8,6 @@ export default function Router({ active }) {
   if (active === "review") return <Review />;
   if (active === "support") return <Support />;
   if (active === "settings") return <Settings />;
-    if (active === "history") return <History />; // ✅ ADD THIS
+  if (active === "history") return <History />; // ✅ ADD THIS
   return <Home />;
 }

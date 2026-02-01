@@ -1,17 +1,18 @@
 // src/components/Navigation/BottomNav.jsx
 export default function BottomNav({ active, onChange }) {
-  const items = [
-    { key: "home", label: "Home", icon: "🏠" },
-    { key: "review", label: "Review", icon: "🗓️" },
-    { key: "settings", label: "Settings", icon: "⚙️" },
-    { key: "support", label: "Support", icon: "🛟" },
-  ];
+const items = [
+  { key: "home", label: "Home", icon: "🏠" },
+  { key: "review", label: "Review", icon: "🗓️" },
+  { key: "history", label: "History", icon: "🕒" }, // ✅ add
+  { key: "settings", label: "Settings", icon: "⚙️" },
+  { key: "support", label: "Support", icon: "🛟" },
+];
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40">
       {/* safe-area-ish padding + border */}
       <div className="mx-auto max-w-md border-t border-white/10 bg-bg/95 backdrop-blur px-3 pb-4 pt-2">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-2">
           {items.map((it) => {
             const isActive = active === it.key;
 
