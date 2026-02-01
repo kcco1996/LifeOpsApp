@@ -592,34 +592,30 @@ export default function Home() {
     upcomingItems,
   ]);
 
-  // ----- Daily History (debounced, safe) -----
+ // ----- Daily History (debounced, safe) -----
 useEffect(() => {
   if (!hydrated) return;
-
-  // Only log days the user can edit (today/future)
   if (!canEdit) return;
 
-  // Debounce: avoid writing history on every keystroke
   const id = setTimeout(() => {
-    // Map your app's amber -> history's yellow (optional but makes filters intuitive)
     const traffic = selectedStatus === "amber" ? "yellow" : selectedStatus;
 
-    // Create a small, meaningful snapshot (do NOT store huge objects)
     upsertDailyEntry({
       day: selectedKey,
 
       trafficLight: traffic,
-      status: traffic, // keep simple for now; you can expand later
+      status: selectedStatus, // ✅ keep app status ("amber"/"green"/"red")
 
-      copingMethod: pickedCoping || "",
-      oneQuestion: selectedAnswer || "",
-      gentlePrep: prepSuggestion || "",
+      copingMethod: (pickedCoping || "").trim(),
+      oneQuestion: (selectedAnswer || "").trim(),
+
+      gentlePrep: (prepSuggestion || "").trim(),
+      prepDone: !!prepDone,
 
       weeklyFocus:
         weeklyPriorities
           .map((x) => (x || "").trim())
-          .filter(Boolean)
-          .slice(0, 1)[0] || "",
+          .filter(Boolean)[0] || "",
 
       weeklyPriorities: weeklyPriorities
         .map((x) => (x || "").trim())
@@ -634,7 +630,6 @@ useEffect(() => {
       todoTodayCount: Array.isArray(selectedTasks) ? selectedTasks.length : 0,
       upcomingCount: Array.isArray(upcomingItems) ? upcomingItems.length : 0,
 
-      // Optional: store quick check numbers (small & useful)
       quickCheck: {
         energy: quickCheck?.energy ?? 2,
         focus: quickCheck?.focus ?? 2,
@@ -653,6 +648,7 @@ useEffect(() => {
   pickedCoping,
   selectedAnswer,
   prepSuggestion,
+  prepDone,
 
   weeklyPriorities,
   weeklyChecklist,
