@@ -109,7 +109,6 @@ function prevIsoWeekKey(weekKey) {
   return `${y - 1}-W52`;
 }
 
-
 const PROMPTS = {
   green: [
     "What’s one thing you want to keep the same today?",
@@ -147,7 +146,7 @@ export default function Home() {
   // one-time migration: if cloud is empty but local has data, upload it once
   const migratedOnce = useRef(false);
 
-    // ----- UI state -----
+  // ----- UI state -----
   const [uiMode, setUiMode] = useState("normal");
   const [selectedKey, setSelectedKey] = useState(todayKey());
   const today = todayKey();
@@ -179,21 +178,13 @@ export default function Home() {
   const [supportPlanByStatus, setSupportPlanByStatus] = useState({ green: "", amber: "", red: "" });
 
   const [carryOpen, setCarryOpen] = useState(false);
-const [carryPick, setCarryPick] = useState({});
+  const [carryPick, setCarryPick] = useState({});
 
   // ----- Weekly storage -----
   const [weeklyByWeekKey, setWeeklyByWeekKey] = useState({});
   const [weeklyChecklistByWeekKey, setWeeklyChecklistByWeekKey] = useState({});
   const [weeklyReviewByWeekKey, setWeeklyReviewByWeekKey] = useState({});
   const [showWeeklyChecklist, setShowWeeklyChecklist] = useState(true);
-
-  const selectedDateObj = keyToDate(selectedKey);
-const isSunday = selectedDateObj.getDay() === 0;
-const reviewEmpty =
-  !weeklyReview.wentWell.trim() &&
-  !weeklyReview.drained.trim() &&
-  !weeklyReview.change.trim() &&
-  !weeklyReview.win.trim();
 
   // ----- Next trip / match -----
   const [nextTrip, setNextTrip] = useState({ title: "", date: "", location: "", notes: "" });
@@ -219,10 +210,10 @@ const reviewEmpty =
   });
 
   // ----- Preferences (Section 2) -----
-const [prefs, setPrefs] = useState({
-  guardrail: "",
-  commuteChecklist: ["Headphones", "Water", "Exit plan", "One calm breath"],
-});
+  const [prefs, setPrefs] = useState({
+    guardrail: "",
+    commuteChecklist: ["Headphones", "Water", "Exit plan", "One calm breath"],
+  });
 
   // ✅ hydration guard
   const [hydrated, setHydrated] = useState(false);
@@ -243,19 +234,26 @@ const [prefs, setPrefs] = useState({
 
   const showExtras = !isBare && (!isRed || !isReduced);
 
- const dailyPrompt = promptForStatus(selectedStatus, selectedKey);
+  const dailyPrompt = promptForStatus(selectedStatus, selectedKey);
   const canEdit = selectedKey >= today;
 
   const currentPlan = supportPlanByStatus[selectedStatus] ?? "";
   const copingSuggestion = copingSuggestionFor({ status: selectedStatus, dayType });
 
+  // ✅ yesterday status MUST exist before we build prepSuggestion
+  const yesterdayKey = addDays(selectedKey, -1);
+  const yesterdayStatus = statusByDate[yesterdayKey] ?? "amber";
+  const redYesterday = yesterdayStatus === "red";
+
   const tomorrowKey = addDays(selectedKey, 1);
   const tomorrowType = dayTypeByDate[tomorrowKey] ?? defaultDayTypeFor(tomorrowKey);
 
-  const prepSuggestion = gentlePrepSuggestion({ status: selectedStatus, tomorrowType });
-  if (redYesterday && status !== "red") {
-  return "After a Red day: keep tomorrow gentle — choose 1 tiny essential and plan one easy comfort.";
-}
+  // ✅ FIX: no invalid return. Override suggestion if yesterday was Red.
+  const prepSuggestion =
+    redYesterday && selectedStatus !== "red"
+      ? "After a Red day: keep tomorrow gentle — choose 1 tiny essential and plan one easy comfort."
+      : gentlePrepSuggestion({ status: selectedStatus, tomorrowType });
+
   const prepDone = !!prepDoneByDate[selectedKey];
   const copingDone = !!copingDoneByDate[selectedKey];
   const pickedCoping = copingPickByDate[selectedKey] ?? "";
@@ -283,9 +281,15 @@ const [prefs, setPrefs] = useState({
     win: "",
   };
 
-  const yesterdayKey = addDays(selectedKey, -1);
-const yesterdayStatus = statusByDate[yesterdayKey] ?? "amber";
-const redYesterday = yesterdayStatus === "red";
+  // ✅ Sunday / review derived values AFTER weeklyReview exists
+  const selectedDateObj = keyToDate(selectedKey);
+  const isSunday = selectedDateObj.getDay() === 0;
+
+  const reviewEmpty =
+    !(weeklyReview.wentWell || "").trim() &&
+    !(weeklyReview.drained || "").trim() &&
+    !(weeklyReview.change || "").trim() &&
+    !(weeklyReview.win || "").trim();
 
   const upcomingSorted = useMemo(() => {
     const items = Array.isArray(upcomingItems) ? upcomingItems.slice() : [];
@@ -392,14 +396,6 @@ const redYesterday = yesterdayStatus === "red";
     });
   }
 
-  {isSunday && canEdit && reviewEmpty && (
-  <div className="rounded-2xl border border-white/10 bg-card p-4">
-    <div className="text-sm font-semibold opacity-90">Sunday check</div>
-    <div className="text-sm opacity-80 mt-1">2-min weekly review?</div>
-    <div className="text-xs opacity-60">Tiny is fine. One sentence each.</div>
-  </div>
-)}
-
   function setWeeklyReviewField(field, value) {
     setWeeklyReviewByWeekKey((prev) => {
       const safePrev = prev ?? {};
@@ -409,16 +405,20 @@ const redYesterday = yesterdayStatus === "red";
   }
 
   const prevWeekKey = useMemo(() => prevIsoWeekKey(weekKey), [weekKey]);
-const prevBlock = weeklyByWeekKey?.[prevWeekKey] ?? { priorities: [], nice: [] };
-const prevPriorities = ensureNRows(prevBlock.priorities, 6).map((x) => (x || "").trim()).filter(Boolean);
-const prevNice = ensureNRows(prevBlock.nice, 6).map((x) => (x || "").trim()).filter(Boolean);
+  const prevBlock = weeklyByWeekKey?.[prevWeekKey] ?? { priorities: [], nice: [] };
+  const prevPriorities = ensureNRows(prevBlock.priorities, 6)
+    .map((x) => (x || "").trim())
+    .filter(Boolean);
+  const prevNice = ensureNRows(prevBlock.nice, 6)
+    .map((x) => (x || "").trim())
+    .filter(Boolean);
 
-const currentHasAny =
-  weeklyPriorities.map((x) => (x || "").trim()).filter(Boolean).length > 0 ||
-  weeklyNice.map((x) => (x || "").trim()).filter(Boolean).length > 0;
+  const currentHasAny =
+    weeklyPriorities.map((x) => (x || "").trim()).filter(Boolean).length > 0 ||
+    weeklyNice.map((x) => (x || "").trim()).filter(Boolean).length > 0;
 
-// “One tweak” becomes next week’s first priority:
-const tweakFromPrev = (weeklyReviewByWeekKey?.[prevWeekKey]?.change ?? "").trim();
+  // “One tweak” becomes next week’s first priority:
+  const tweakFromPrev = (weeklyReviewByWeekKey?.[prevWeekKey]?.change ?? "").trim();
 
   // Upcoming editor actions
   function openAddUpcoming() {
@@ -631,72 +631,71 @@ const tweakFromPrev = (weeklyReviewByWeekKey?.[prevWeekKey]?.change ?? "").trim(
     upcomingItems,
   ]);
 
- // ----- Daily History (debounced, safe) -----
-useEffect(() => {
-  if (!hydrated) return;
-  if (!canEdit) return;
+  // ----- Daily History (debounced, safe) -----
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!canEdit) return;
 
-  const id = setTimeout(() => {
-    const traffic = selectedStatus === "amber" ? "yellow" : selectedStatus;
+    const id = setTimeout(() => {
+      const traffic = selectedStatus === "amber" ? "yellow" : selectedStatus;
 
-    upsertDailyEntry({
-      day: selectedKey,
+      upsertDailyEntry({
+        day: selectedKey,
 
-      trafficLight: traffic,
-      status: selectedStatus, // ✅ keep app status ("amber"/"green"/"red")
+        trafficLight: traffic,
+        status: selectedStatus, // ✅ keep app status ("amber"/"green"/"red")
 
-      copingMethod: (pickedCoping || "").trim(),
-      oneQuestion: (selectedAnswer || "").trim(),
+        copingMethod: (pickedCoping || "").trim(),
+        oneQuestion: (selectedAnswer || "").trim(),
 
-      gentlePrep: (prepSuggestion || "").trim(),
-      prepDone: !!prepDone,
+        gentlePrep: (prepSuggestion || "").trim(),
+        prepDone: !!prepDone,
 
-      weeklyFocus:
-        weeklyPriorities
+        weeklyFocus:
+          weeklyPriorities
+            .map((x) => (x || "").trim())
+            .filter(Boolean)[0] || "",
+
+        weeklyPriorities: weeklyPriorities
           .map((x) => (x || "").trim())
-          .filter(Boolean)[0] || "",
+          .filter(Boolean)
+          .slice(0, 6),
 
-      weeklyPriorities: weeklyPriorities
-        .map((x) => (x || "").trim())
-        .filter(Boolean)
-        .slice(0, 6),
+        weeklyChecklist: ensureNRows(weeklyChecklist?.items, 6)
+          .map((x) => (x || "").trim())
+          .filter(Boolean)
+          .slice(0, 6),
 
-      weeklyChecklist: ensureNRows(weeklyChecklist?.items, 6)
-        .map((x) => (x || "").trim())
-        .filter(Boolean)
-        .slice(0, 6),
+        todoTodayCount: Array.isArray(selectedTasks) ? selectedTasks.length : 0,
+        upcomingCount: Array.isArray(upcomingItems) ? upcomingItems.length : 0,
 
-      todoTodayCount: Array.isArray(selectedTasks) ? selectedTasks.length : 0,
-      upcomingCount: Array.isArray(upcomingItems) ? upcomingItems.length : 0,
+        quickCheck: {
+          energy: quickCheck?.energy ?? 2,
+          focus: quickCheck?.focus ?? 2,
+          stress: quickCheck?.stress ?? 3,
+        },
+      });
+    }, 900);
 
-      quickCheck: {
-        energy: quickCheck?.energy ?? 2,
-        focus: quickCheck?.focus ?? 2,
-        stress: quickCheck?.stress ?? 3,
-      },
-    });
-  }, 900);
+    return () => clearTimeout(id);
+  }, [
+    hydrated,
+    canEdit,
+    selectedKey,
 
-  return () => clearTimeout(id);
-}, [
-  hydrated,
-  canEdit,
-  selectedKey,
+    selectedStatus,
+    pickedCoping,
+    selectedAnswer,
+    prepSuggestion,
+    prepDone,
 
-  selectedStatus,
-  pickedCoping,
-  selectedAnswer,
-  prepSuggestion,
-  prepDone,
+    weeklyPriorities,
+    weeklyChecklist,
+    selectedTasks,
+    upcomingItems,
 
-  weeklyPriorities,
-  weeklyChecklist,
-  selectedTasks,
-  upcomingItems,
-
-  quickCheck,
-]);
-
+    quickCheck,
+  ]);
 
   // Auto-reduce on Red, return to normal otherwise (per selected day)
   useEffect(() => {
@@ -835,28 +834,27 @@ useEffect(() => {
 
       {/* Brain in Hand */}
       <BrainInHandCard status={selectedStatus} />
-      
+
       {prefs?.guardrail?.trim() && (
-  <div className="rounded-2xl border border-white/10 bg-card p-4">
-    <div className="text-xs font-semibold opacity-70">Today’s guardrail</div>
-    <div className="text-sm opacity-90 whitespace-pre-wrap mt-1">{prefs.guardrail}</div>
-  </div>
-)}
-
-{selectedStatus === "amber" && dayType === "Office day" && Array.isArray(prefs?.commuteChecklist) && (
-  <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
-    <div className="text-sm font-semibold opacity-90">Commute protection</div>
-    <div className="text-xs opacity-60">Small protections before leaving.</div>
-    <div className="space-y-2">
-      {prefs.commuteChecklist.filter(Boolean).slice(0, 6).map((x, i) => (
-        <div key={i} className="rounded-xl bg-card2 px-3 py-2 text-sm">
-          {x}
+        <div className="rounded-2xl border border-white/10 bg-card p-4">
+          <div className="text-xs font-semibold opacity-70">Today’s guardrail</div>
+          <div className="text-sm opacity-90 whitespace-pre-wrap mt-1">{prefs.guardrail}</div>
         </div>
-      ))}
-    </div>
-  </div>
-)}
+      )}
 
+      {selectedStatus === "amber" && dayType === "Office day" && Array.isArray(prefs?.commuteChecklist) && (
+        <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
+          <div className="text-sm font-semibold opacity-90">Commute protection</div>
+          <div className="text-xs opacity-60">Small protections before leaving.</div>
+          <div className="space-y-2">
+            {prefs.commuteChecklist.filter(Boolean).slice(0, 6).map((x, i) => (
+              <div key={i} className="rounded-xl bg-card2 px-3 py-2 text-sm">
+                {x}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Red-mode controls */}
       {isRed && (
@@ -911,6 +909,15 @@ useEffect(() => {
         }}
       />
 
+      {/* ✅ Sunday check (MOVED INSIDE JSX RETURN) */}
+      {isSunday && canEdit && reviewEmpty && (
+        <div className="rounded-2xl border border-white/10 bg-card p-4">
+          <div className="text-sm font-semibold opacity-90">Sunday check</div>
+          <div className="text-sm opacity-80 mt-1">2-min weekly review?</div>
+          <div className="text-xs opacity-60">Tiny is fine. One sentence each.</div>
+        </div>
+      )}
+
       {/* Weekly: Focus (Top 3) */}
       <div className="rounded-2xl border border-white/10 bg-card p-4">
         <div className="flex items-center justify-between">
@@ -919,19 +926,18 @@ useEffect(() => {
         </div>
 
         {canEdit && !currentHasAny && (prevPriorities.length || prevNice.length || tweakFromPrev) && (
-  <button
-    className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-    onClick={() => {
-      const initial = {};
-      [...prevPriorities, ...prevNice].forEach((x) => (initial[x] = true));
-      setCarryPick(initial);
-      setCarryOpen(true);
-    }}
-  >
-    Carry over last week (keep/drop)
-  </button>
-)}
-
+          <button
+            className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+            onClick={() => {
+              const initial = {};
+              [...prevPriorities, ...prevNice].forEach((x) => (initial[x] = true));
+              setCarryPick(initial);
+              setCarryOpen(true);
+            }}
+          >
+            Carry over last week (keep/drop)
+          </button>
+        )}
 
         <div className="mt-3 space-y-2">
           <div className="text-xs font-semibold opacity-70">Top priorities</div>
@@ -1293,9 +1299,7 @@ useEffect(() => {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold">
-                          <span className="opacity-70 mr-2">
-                            {(item.type || "other").toUpperCase()}
-                          </span>
+                          <span className="opacity-70 mr-2">{(item.type || "other").toUpperCase()}</span>
                           {item.title || "Untitled"}
                         </div>
                         {(item.date || item.location) && (
@@ -1332,9 +1336,7 @@ useEffect(() => {
                 ))
               )}
 
-              {upcomingSorted.length > 12 && (
-                <div className="text-xs opacity-60">Showing first 12 items.</div>
-              )}
+              {upcomingSorted.length > 12 && <div className="text-xs opacity-60">Showing first 12 items.</div>}
             </div>
           </div>
         </div>
@@ -1360,74 +1362,73 @@ useEffect(() => {
             </div>
 
             {carryOpen && (
-  <div className="fixed inset-0 z-50" onClick={() => setCarryOpen(false)}>
-    <div className="absolute inset-0 bg-black/60" />
-    <div
-      className="absolute left-0 right-0 bottom-0 rounded-t-2xl border border-white/10 bg-bg p-4"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold opacity-90">Carry over</div>
-        <button
-          className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90"
-          onClick={() => setCarryOpen(false)}
-        >
-          Close
-        </button>
-      </div>
+              <div className="fixed inset-0 z-50" onClick={() => setCarryOpen(false)}>
+                <div className="absolute inset-0 bg-black/60" />
+                <div
+                  className="absolute left-0 right-0 bottom-0 rounded-t-2xl border border-white/10 bg-bg p-4"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold opacity-90">Carry over</div>
+                    <button
+                      className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90"
+                      onClick={() => setCarryOpen(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
 
-      <div className="mt-3 text-xs opacity-60">
-        Tick what to keep. Your previous “one tweak” will be added as Priority #1 automatically (if you apply).
-      </div>
+                  <div className="mt-3 text-xs opacity-60">
+                    Tick what to keep. Your previous “one tweak” will be added as Priority #1 automatically (if you
+                    apply).
+                  </div>
 
-      <div className="mt-3 space-y-2 max-h-[50vh] overflow-auto">
-        {[...new Set([...prevPriorities, ...prevNice])].map((item) => (
-          <label key={item} className="flex items-center gap-2 rounded-xl bg-card2 px-3 py-2">
-            <input
-              type="checkbox"
-              checked={!!carryPick[item]}
-              onChange={() => setCarryPick((p) => ({ ...(p ?? {}), [item]: !p?.[item] }))}
-              className="h-4 w-4"
-            />
-            <span className="text-sm">{item}</span>
-          </label>
-        ))}
-      </div>
+                  <div className="mt-3 space-y-2 max-h-[50vh] overflow-auto">
+                    {[...new Set([...prevPriorities, ...prevNice])].map((item) => (
+                      <label key={item} className="flex items-center gap-2 rounded-xl bg-card2 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={!!carryPick[item]}
+                          onChange={() => setCarryPick((p) => ({ ...(p ?? {}), [item]: !p?.[item] }))}
+                          className="h-4 w-4"
+                        />
+                        <span className="text-sm">{item}</span>
+                      </label>
+                    ))}
+                  </div>
 
-      <button
-        className="w-full mt-3 rounded-xl bg-purple px-3 py-2 text-sm font-semibold hover:opacity-90 active:opacity-80"
-        onClick={() => {
-          const kept = Object.entries(carryPick)
-            .filter(([, v]) => !!v)
-            .map(([k]) => k)
-            .slice(0, 6);
+                  <button
+                    className="w-full mt-3 rounded-xl bg-purple px-3 py-2 text-sm font-semibold hover:opacity-90 active:opacity-80"
+                    onClick={() => {
+                      const kept = Object.entries(carryPick)
+                        .filter(([, v]) => !!v)
+                        .map(([k]) => k)
+                        .slice(0, 6);
 
-          // insert tweak first if present
-          const nextPriorities = [
-            ...(tweakFromPrev ? [tweakFromPrev] : []),
-            ...kept,
-          ].filter(Boolean).slice(0, 6);
+                      // insert tweak first if present
+                      const nextPriorities = [...(tweakFromPrev ? [tweakFromPrev] : []), ...kept]
+                        .filter(Boolean)
+                        .slice(0, 6);
 
-          setWeeklyByWeekKey((prev) => {
-            const safePrev = prev ?? {};
-            return {
-              ...safePrev,
-              [weekKey]: {
-                priorities: ensureNRows(nextPriorities, 6),
-                nice: ensureNRows([], 6),
-              },
-            };
-          });
+                      setWeeklyByWeekKey((prev) => {
+                        const safePrev = prev ?? {};
+                        return {
+                          ...safePrev,
+                          [weekKey]: {
+                            priorities: ensureNRows(nextPriorities, 6),
+                            nice: ensureNRows([], 6),
+                          },
+                        };
+                      });
 
-          setCarryOpen(false);
-        }}
-      >
-        Apply carry-over
-      </button>
-    </div>
-  </div>
-)}
-
+                      setCarryOpen(false);
+                    }}
+                  >
+                    Apply carry-over
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="mt-3 max-h-[60vh] overflow-auto space-y-1">
               {last30.map((k) => {
@@ -1462,7 +1463,7 @@ useEffect(() => {
         </div>
       )}
 
-     {/* Sheets */}
+      {/* Sheets */}
       <SupportSheet
         open={supportOpen}
         onClose={() => setSupportOpen(false)}
