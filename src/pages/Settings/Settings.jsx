@@ -157,3 +157,40 @@ export default function Settings() {
     </div>
   );
 }
+
+<div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
+  <div className="text-sm font-semibold opacity-90">Preferences</div>
+
+  <div className="space-y-1">
+    <div className="text-xs font-semibold opacity-70">Today’s guardrail</div>
+    <div className="text-xs opacity-60">One rule for today (shown on Home).</div>
+    <textarea
+      value={prefs?.guardrail ?? ""}
+      onChange={(e) => setPrefs((p) => ({ ...(p ?? {}), guardrail: e.target.value }))}
+      placeholder="e.g., No extra tasks after 7pm."
+      className="w-full min-h-[80px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+    />
+  </div>
+
+  <div className="space-y-2">
+    <div className="text-xs font-semibold opacity-70">Commute protection checklist</div>
+    <div className="text-xs opacity-60">Shown when Office day + Amber.</div>
+
+    {(prefs?.commuteChecklist ?? []).slice(0, 6).map((v, i) => (
+      <input
+        key={i}
+        value={v}
+        onChange={(e) =>
+          setPrefs((p) => {
+            const list = Array.isArray(p?.commuteChecklist) ? p.commuteChecklist.slice(0, 6) : [];
+            while (list.length < 6) list.push("");
+            list[i] = e.target.value;
+            return { ...(p ?? {}), commuteChecklist: list };
+          })
+        }
+        placeholder={`Item ${i + 1}`}
+        className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+      />
+    ))}
+  </div>
+</div>

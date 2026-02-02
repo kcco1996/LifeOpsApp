@@ -88,58 +88,36 @@ function isoWeekKeyFromDayKey(dayKey) {
   return isoWeekKeyFromDate(keyToDate(dayKey));
 }
 
-// -------------------- Prompts / suggestions --------------------
-function promptForStatus(status) {
-  if (status === "green") return "What’s one thing you want to keep the same today?";
-  if (status === "amber") return "What support would help today feel easier?";
-  return "What’s the smallest safe next step right now?";
+function pickByDay(list, dayKey) {
+  // stable pick so it doesn't change on every render
+  let h = 0;
+  const s = String(dayKey || "");
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return list[h % list.length];
 }
 
-function gentlePrepSuggestion({ status, tomorrowType }) {
-  if (status === "red") {
-    return "One small safety step: reduce stimulation (headphones / dim screen) and keep plans minimal.";
-  }
+const PROMPTS = {
+  green: [
+    "What’s one thing you want to keep the same today?",
+    "What’s one small win you can repeat?",
+    "What is working — and how do you protect it?",
+  ],
+  amber: [
+    "What support would help today feel easier?",
+    "What can you remove to protect your energy?",
+    "What’s the smallest version of “success” today?",
+  ],
+  red: [
+    "What’s the smallest safe next step right now?",
+    "What do you need less of right now (noise, people, tasks)?",
+    "What’s one kind thing you can do for your nervous system?",
+  ],
+};
 
-  if (status === "amber") {
-    if (tomorrowType === "Office day")
-      return "Prep 1 thing for tomorrow’s office day: pack bag / lay out clothes / set a calm alarm.";
-    if (tomorrowType === "Uni day")
-      return "Prep 1 thing for uni: open the link / note the topic / set a 20-minute timer.";
-    if (tomorrowType === "Groundhop day")
-      return "Prep for groundhop: charge phone + check travel/ticket + plan a simple food stop.";
-    return "Prep 1 small comfort for tomorrow: drink, snack, or a quiet break plan.";
-  }
-
-  if (tomorrowType === "Office day") return "Small win: decide tomorrow’s first task before bed.";
-  if (tomorrowType === "Uni day")
-    return "Small win: write one sentence on what you want to understand in uni tomorrow.";
-  if (tomorrowType === "Groundhop day") return "Small win: check kickoff time and your travel plan once.";
-  return "Small win: choose one simple routine to keep steady tomorrow.";
-}
-
-function copingSuggestionFor({ status, dayType }) {
-  if (status === "red") return "Reduce stimulation (headphones / dim screen) + open Support if needed.";
-
-  if (status === "amber") {
-    if (dayType === "Office day")
-      return "Before leaving: headphones + one calm breath + check your exit plan.";
-    if (dayType === "Uni day") return "Open the uni link now and set a 15-minute timer (stop when it ends).";
-    if (dayType === "Remote work day") return "2-minute reset: water + stand up + choose only 1 next task.";
-    if (dayType === "Groundhop day") return "Prep calm: charge phone + check ticket + plan a quiet food stop.";
-    return "Tiny reset: water + sit comfortably + one slow breath.";
-  }
-
-  return "Keep steady: choose your first small task and stop after it if needed.";
-}
-
-function ensureNRows(arr, n) {
-  const base = Array.isArray(arr) ? arr.slice(0, n) : [];
-  while (base.length < n) base.push("");
-  return base;
-}
-
-function safeId() {
-  return globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.floor(Math.random() * 1000));
+function promptForStatus(status, dayKey) {
+  const s = status === "amber" ? "amber" : status;
+  const list = PROMPTS[s] ?? PROMPTS.amber;
+  return pickByDay(list, dayKey);
 }
 
 // -------------------- Home --------------------
@@ -215,6 +193,12 @@ export default function Home() {
     notes: "",
   });
 
+  // ----- Preferences (Section 2) -----
+const [prefs, setPrefs] = useState({
+  guardrail: "",
+  commuteChecklist: ["Headphones", "Water", "Exit plan", "One calm breath"],
+});
+
   // ✅ hydration guard
   const [hydrated, setHydrated] = useState(false);
 
@@ -234,7 +218,7 @@ export default function Home() {
 
   const showExtras = !isBare && (!isRed || !isReduced);
 
-  const dailyPrompt = promptForStatus(selectedStatus);
+ const dailyPrompt = promptForStatus(selectedStatus, selectedKey);
   const canEdit = selectedKey >= today;
 
   const currentPlan = supportPlanByStatus[selectedStatus] ?? "";
@@ -244,6 +228,9 @@ export default function Home() {
   const tomorrowType = dayTypeByDate[tomorrowKey] ?? defaultDayTypeFor(tomorrowKey);
 
   const prepSuggestion = gentlePrepSuggestion({ status: selectedStatus, tomorrowType });
+  if (redYesterday && status !== "red") {
+  return "After a Red day: keep tomorrow gentle — choose 1 tiny essential and plan one easy comfort.";
+}
   const prepDone = !!prepDoneByDate[selectedKey];
   const copingDone = !!copingDoneByDate[selectedKey];
   const pickedCoping = copingPickByDate[selectedKey] ?? "";
@@ -270,6 +257,10 @@ export default function Home() {
     change: "",
     win: "",
   };
+
+  const yesterdayKey = addDays(selectedKey, -1);
+const yesterdayStatus = statusByDate[yesterdayKey] ?? "amber";
+const redYesterday = yesterdayStatus === "red";
 
   const upcomingSorted = useMemo(() => {
     const items = Array.isArray(upcomingItems) ? upcomingItems.slice() : [];
@@ -452,6 +443,7 @@ export default function Home() {
       if (data.copingPickByDate) setCopingPickByDate(data.copingPickByDate);
       if (data.supportShownByDate) setSupportShownByDate(data.supportShownByDate);
       if (data.quickCheckByDate) setQuickCheckByDate(data.quickCheckByDate);
+      if (data.prefs) setPrefs(data.prefs);
 
       if (data.weeklyByWeekKey) setWeeklyByWeekKey(data.weeklyByWeekKey);
       if (data.weeklyChecklistByWeekKey) setWeeklyChecklistByWeekKey(data.weeklyChecklistByWeekKey);
@@ -542,6 +534,7 @@ export default function Home() {
       copingPickByDate,
       supportShownByDate,
       quickCheckByDate,
+      prefs,
 
       weeklyByWeekKey,
       weeklyChecklistByWeekKey,
@@ -581,6 +574,7 @@ export default function Home() {
     copingPickByDate,
     supportShownByDate,
     quickCheckByDate,
+    prefs,
 
     weeklyByWeekKey,
     weeklyChecklistByWeekKey,
@@ -796,6 +790,28 @@ useEffect(() => {
 
       {/* Brain in Hand */}
       <BrainInHandCard status={selectedStatus} />
+      
+      {prefs?.guardrail?.trim() && (
+  <div className="rounded-2xl border border-white/10 bg-card p-4">
+    <div className="text-xs font-semibold opacity-70">Today’s guardrail</div>
+    <div className="text-sm opacity-90 whitespace-pre-wrap mt-1">{prefs.guardrail}</div>
+  </div>
+)}
+
+{selectedStatus === "amber" && dayType === "Office day" && Array.isArray(prefs?.commuteChecklist) && (
+  <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
+    <div className="text-sm font-semibold opacity-90">Commute protection</div>
+    <div className="text-xs opacity-60">Small protections before leaving.</div>
+    <div className="space-y-2">
+      {prefs.commuteChecklist.filter(Boolean).slice(0, 6).map((x, i) => (
+        <div key={i} className="rounded-xl bg-card2 px-3 py-2 text-sm">
+          {x}
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+
 
       {/* Red-mode controls */}
       {isRed && (

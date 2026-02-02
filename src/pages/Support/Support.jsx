@@ -1,88 +1,133 @@
 // src/pages/Support/Support.jsx
+import { useEffect, useState } from "react";
 import { exportBackupToFile } from "../../data/storage/backup";
+import { getSupportProfile, setSupportProfile } from "../../data/storage/supportProfile";
+
+const TEMPLATES = {
+  green: `Keep momentum:
+- Start with 1 easy task
+- Take breaks before you need them
+- Stop after the win`,
+  amber: `Protect energy:
+- Reduce tasks to the smallest version
+- Headphones / quiet space
+- One support message if needed`,
+  red: `Safety + simplicity:
+- Reduce stimulation (dim screen / headphones)
+- Drink water + sit comfortably
+- Do the smallest safe step (or rest)`,
+};
 
 export default function Support() {
+  const [profile, setProfile] = useState(() => getSupportProfile());
+  const [savedTick, setSavedTick] = useState(false);
+
+  useEffect(() => {
+    setSupportProfile(profile);
+    setSavedTick(true);
+    const id = setTimeout(() => setSavedTick(false), 800);
+    return () => clearTimeout(id);
+  }, [profile]);
+
+  function updateTrusted(i, field, val) {
+    setProfile((p) => {
+      const list = Array.isArray(p.trustedPeople) ? p.trustedPeople.slice() : [];
+      while (list.length < 3) list.push({ name: "", method: "", notes: "" });
+      list[i] = { ...(list[i] ?? {}), [field]: val };
+      return { ...(p ?? {}), trustedPeople: list };
+    });
+  }
+
   return (
     <div className="max-w-md p-4 space-y-4">
       <h1 className="text-3xl font-bold tracking-tight text-purple">Support</h1>
 
-      {/* Quick help */}
       <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
-        <div className="text-sm font-semibold opacity-90">How to use Life Ops</div>
-        <ul className="text-sm opacity-80 list-disc pl-5 space-y-1">
-          <li><b>Green</b>: keep momentum — pick one thing to maintain.</li>
-          <li><b>Amber</b>: protect energy — reduce scope, pick a support.</li>
-          <li><b>Red</b>: safety + simplicity — use Support, reduce screen, do the smallest safe step.</li>
-        </ul>
-        <div className="text-xs opacity-60">
-          Your goal is stability, not perfection.
+        <div className="text-sm font-semibold opacity-90">Quick templates</div>
+        <div className="text-xs opacity-60">Copy/paste into your Green/Amber/Red plan.</div>
+
+        <div className="space-y-2">
+          {Object.entries(TEMPLATES).map(([k, txt]) => (
+            <button
+              key={k}
+              className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80 text-left"
+              onClick={() => {
+                navigator.clipboard?.writeText(txt);
+                alert(`Copied ${k.toUpperCase()} template ✅`);
+              }}
+            >
+              Copy {k.toUpperCase()} template
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Red day support */}
       <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
-        <div className="text-sm font-semibold opacity-90">Red day mode</div>
-        <div className="text-sm opacity-80">
-          If you hit Red, the app keeps things simple. Use:
+        <div className="text-sm font-semibold opacity-90">Trusted people</div>
+        <div className="text-xs opacity-60">Local-only. Keep it short.</div>
+
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-2xl bg-card2 p-3 space-y-2">
+              <input
+                value={profile?.trustedPeople?.[i]?.name ?? ""}
+                onChange={(e) => updateTrusted(i, "name", e.target.value)}
+                placeholder={`Person ${i + 1} name`}
+                className="w-full rounded-xl bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+              />
+              <input
+                value={profile?.trustedPeople?.[i]?.method ?? ""}
+                onChange={(e) => updateTrusted(i, "method", e.target.value)}
+                placeholder="How to reach them (text/call/etc)"
+                className="w-full rounded-xl bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+              />
+              <input
+                value={profile?.trustedPeople?.[i]?.notes ?? ""}
+                onChange={(e) => updateTrusted(i, "notes", e.target.value)}
+                placeholder="Notes (optional)"
+                className="w-full rounded-xl bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+              />
+            </div>
+          ))}
         </div>
-        <ul className="text-sm opacity-80 list-disc pl-5 space-y-1">
-          <li><b>Support</b> sheet</li>
-          <li><b>Reduce screen</b> or <b>Bare</b> mode</li>
-          <li>One tiny task only (or none)</li>
-        </ul>
+
+        {savedTick && <div className="text-xs opacity-60">Saved ✓</div>}
       </div>
 
-      {/* Data & privacy */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
-        <div className="text-sm font-semibold opacity-90">Your data</div>
-        <div className="text-sm opacity-80">
-          - If not signed in: everything saves <b>locally</b> on this device.<br />
-          - If signed in: your main state also syncs to <b>Firebase</b>.<br />
-          - Daily History is stored locally (unless you later choose to sync it).
-        </div>
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
+        <div className="text-sm font-semibold opacity-90">Early warning signs</div>
+        <textarea
+          value={profile?.earlyWarningSigns ?? ""}
+          onChange={(e) => setProfile((p) => ({ ...(p ?? {}), earlyWarningSigns: e.target.value }))}
+          placeholder="e.g., tight chest, irritability, shutdown signs..."
+          className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+        />
 
+        <div className="text-sm font-semibold opacity-90">What helps</div>
+        <textarea
+          value={profile?.whatHelps ?? ""}
+          onChange={(e) => setProfile((p) => ({ ...(p ?? {}), whatHelps: e.target.value }))}
+          placeholder="e.g., headphones, dim light, short walk..."
+          className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+        />
+
+        <div className="text-sm font-semibold opacity-90">Grounding kit</div>
+        <textarea
+          value={profile?.groundingKit ?? ""}
+          onChange={(e) => setProfile((p) => ({ ...(p ?? {}), groundingKit: e.target.value }))}
+          placeholder="e.g., water, snack, gum, fidget..."
+          className="w-full min-h-[90px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+        />
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
+        <div className="text-sm font-semibold opacity-90">Data safety</div>
         <button
-          className="w-full mt-2 rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+          className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
           onClick={exportBackupToFile}
         >
           Export backup (.json)
         </button>
-
-        <div className="text-xs opacity-60">
-          Tip: export a backup before major edits or refactors.
-        </div>
-      </div>
-
-      {/* Troubleshooting */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
-        <div className="text-sm font-semibold opacity-90">Troubleshooting</div>
-
-        <div className="text-sm opacity-80">
-          <b>History page is empty</b><br />
-          Use Home normally (change status / type a note) and wait ~1 second. Then return to History.
-        </div>
-
-        <div className="text-sm opacity-80">
-          <b>Sync feels delayed</b><br />
-          If Firebase hit quota/network issues, writes can pause briefly. Check Settings → Sync.
-        </div>
-
-        <div className="text-sm opacity-80">
-          <b>I’m worried about losing data</b><br />
-          Export a backup in Settings, then you can restore it anytime.
-        </div>
-      </div>
-
-      {/* Safety note */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
-        <div className="text-sm font-semibold opacity-90">Safety note</div>
-        <div className="text-sm opacity-80">
-          Life Ops is not medical advice. If you feel unsafe or in danger, contact emergency services
-          or a trusted person immediately.
-        </div>
-        <div className="text-xs opacity-60">
-          UK: 999 (emergency) • 111 (non-emergency medical)
-        </div>
       </div>
     </div>
   );

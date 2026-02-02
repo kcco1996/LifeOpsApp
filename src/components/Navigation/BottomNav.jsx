@@ -3,7 +3,7 @@ export default function BottomNav({ active, onChange }) {
 const items = [
   { key: "home", label: "Home", icon: "🏠" },
   { key: "review", label: "Review", icon: "🗓️" },
-  { key: "history", label: "History", icon: "🕒" }, // ✅ add
+ { key: "history", label: "History", icon: "📈" },
   { key: "settings", label: "Settings", icon: "⚙️" },
   { key: "support", label: "Support", icon: "🛟" },
 ];
