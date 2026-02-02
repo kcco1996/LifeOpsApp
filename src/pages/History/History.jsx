@@ -1,4 +1,3 @@
-// src/pages/History/History.jsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getDailyHistory } from "../../data/storage/historyDaily";
 
