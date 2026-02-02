@@ -133,6 +133,79 @@ function promptForStatus(status, dayKey) {
   return pickByDay(list, dayKey);
 }
 
+// -------------------- Small helpers (missing in file) --------------------
+function ensureNRows(arr, n) {
+  const out = Array.isArray(arr) ? arr.slice(0, n) : [];
+  while (out.length < n) out.push("");
+  return out;
+}
+
+function safeId() {
+  // stable-enough local id for list items
+  return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Coping suggestion based on status + day type.
+// (You can refine this later; this version is designed to NEVER crash.)
+function copingSuggestionFor({ status, dayType }) {
+  const s = status || "amber";
+  const d = dayType || "";
+
+  const base = {
+    green: [
+      "Pick 1 task and do a 10-minute start.",
+      "Water + quick stretch, then one small win.",
+      "Keep momentum: do the easiest thing first.",
+    ],
+    amber: [
+      "Reduce inputs: headphones, lower light, one step at a time.",
+      "Do a 5-minute reset: water, breathe, and choose one priority.",
+      "Swap to the smallest version of success today.",
+    ],
+    red: [
+      "Safety first: pause, breathe slowly, reduce stimulation.",
+      "Do one comfort action (warm drink / lie down / quiet room).",
+      "Text someone / open Support Sheet / pick one tiny next step.",
+    ],
+  };
+
+  // tiny dayType tailoring
+  const officeExtra = [
+    "Commute protection: headphones + exit plan + one calm breath.",
+    "Office day: keep it minimal — one essential task only.",
+  ];
+  const uniExtra = ["Uni day: do the smallest step (5–10 mins) then stop."];
+  const groundhopExtra = ["Groundhop day: plan one calm break + easy food/water."];
+  const restExtra = ["Rest day: permission to recover — one gentle reset is enough."];
+
+  let list = base[s] ?? base.amber;
+
+  if (d === "Office day" && s !== "green") list = [...officeExtra, ...list];
+  if (d === "Uni day" && s !== "green") list = [...uniExtra, ...list];
+  if (d === "Groundhop day" && s !== "green") list = [...groundhopExtra, ...list];
+  if (d === "Rest day") list = [...restExtra, ...list];
+
+  // stable pick per dayType+status so it doesn’t change constantly
+  const key = `${s}|${d}`;
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return list[h % list.length];
+}
+
+function gentlePrepSuggestion({ status, tomorrowType }) {
+  const s = status || "amber";
+  const t = tomorrowType || "";
+
+  if (s === "red") return "Tonight: charge devices, lay out clothes, and pick ONE easy comfort.";
+  if (s === "green") return "Set tomorrow up: 1 priority, 1 nice-to-have, and an early wind-down.";
+  // amber default
+  if (t === "Office day") return "Office tomorrow: pack essentials, choose a calm commute plan, and set 1 small priority.";
+  if (t === "Uni day") return "Uni tomorrow: decide the smallest task you’ll do (10 mins) and stop.";
+  if (t === "Groundhop day") return "Groundhop tomorrow: plan food/water + one quiet break.";
+  return "Tomorrow: choose 1 essential, prep one small thing, and plan one easy comfort.";
+}
+
+
 // -------------------- Home --------------------
 export default function Home() {
   const { user, authLoading } = useAuth();
