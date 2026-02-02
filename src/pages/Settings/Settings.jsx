@@ -1,20 +1,62 @@
-// src/pages/Settings/Settings.jsx
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 
-import { exportBackupToFile, importBackupFromFile, resetAllLocalData } from "../../data/storage/backup";
-import { loadAppData } from "../../data/storage/localStorage";
+import {
+  exportBackupToFile,
+  importBackupFromFile,
+  resetAllLocalData,
+} from "../../data/storage/backup";
 
-import { migrateLocalToCloud, getCloudWriteStatus } from "../../data/storage/lifeOpsCloud";
+import { loadAppData, saveAppData } from "../../data/storage/localStorage";
+import {
+  migrateLocalToCloud,
+  getCloudWriteStatus,
+  saveCloudState,
+} from "../../data/storage/lifeOpsCloud";
 
 export default function Settings() {
-  const { user } = useAuth();
+  const { user, authLoading } = useAuth();
   const fileRef = useRef(null);
   const [importErr, setImportErr] = useState("");
-  const [importOk, setImportOk] = useState("");
   const cloudStatus = getCloudWriteStatus();
 
   const isWhitelisted = user?.email === "kcco1996@gmail.com";
+
+  // ---------------- Preferences State ----------------
+  const [prefs, setPrefs] = useState({
+    guardrail: "",
+    commuteChecklist: ["Headphones", "Water", "Exit plan", "One calm breath", "", ""],
+  });
+
+  const [hydrated, setHydrated] = useState(false);
+
+  // Load prefs on mount
+  useEffect(() => {
+    if (authLoading) return;
+    const saved = loadAppData() ?? {};
+    if (saved?.prefs) {
+      setPrefs((p) => ({ ...p, ...saved.prefs }));
+    }
+    setHydrated(true);
+  }, [authLoading]);
+
+  // Save prefs (local + cloud)
+  useEffect(() => {
+    if (!hydrated) return;
+
+    const id = setTimeout(() => {
+      const current = loadAppData() ?? {};
+      const next = { ...current, prefs };
+
+      saveAppData(next);
+
+      if (user && !authLoading) {
+        saveCloudState(user.uid, next);
+      }
+    }, 350);
+
+    return () => clearTimeout(id);
+  }, [prefs, hydrated, user, authLoading]);
 
   return (
     <div className="max-w-md p-4 space-y-4">
@@ -38,11 +80,51 @@ export default function Settings() {
         )}
       </div>
 
+      {/* Preferences */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
+        <div className="text-sm font-semibold opacity-90">Preferences</div>
+
+        <div className="space-y-1">
+          <div className="text-xs font-semibold opacity-70">Today’s guardrail</div>
+          <div className="text-xs opacity-60">One rule for today (shown on Home).</div>
+          <textarea
+            value={prefs.guardrail}
+            onChange={(e) => setPrefs((p) => ({ ...p, guardrail: e.target.value }))}
+            placeholder="e.g., No extra tasks after 7pm."
+            className="w-full min-h-[80px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-xs font-semibold opacity-70">Commute protection checklist</div>
+          <div className="text-xs opacity-60">Shown when Office day + Amber.</div>
+
+          {Array.from({ length: 6 }).map((_, i) => (
+            <input
+              key={i}
+              value={prefs.commuteChecklist?.[i] ?? ""}
+              onChange={(e) =>
+                setPrefs((p) => {
+                  const list = Array.isArray(p.commuteChecklist)
+                    ? p.commuteChecklist.slice(0, 6)
+                    : [];
+                  while (list.length < 6) list.push("");
+                  list[i] = e.target.value;
+                  return { ...p, commuteChecklist: list };
+                })
+              }
+              placeholder={`Item ${i + 1}`}
+              className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+            />
+          ))}
+        </div>
+      </div>
+
       {/* Data tools */}
       <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
         <div className="text-sm font-semibold opacity-90">Data</div>
         <div className="text-xs opacity-70">
-          Backup includes: Home data + Daily History timeline. You can restore on any device.
+          Backup includes: Home data + Daily History timeline.
         </div>
 
         <button
@@ -59,12 +141,10 @@ export default function Settings() {
           className="hidden"
           onChange={async (e) => {
             setImportErr("");
-            setImportOk("");
             const file = e.target.files?.[0];
             if (!file) return;
             try {
               await importBackupFromFile(file);
-              // importBackupFromFile reloads the page
             } catch (err) {
               setImportErr(err?.message || "Import failed.");
             } finally {
@@ -81,22 +161,17 @@ export default function Settings() {
         </button>
 
         {importErr && <div className="text-xs text-red-300">{importErr}</div>}
-        {importOk && <div className="text-xs text-green-300">{importOk}</div>}
 
         <button
           className="w-full rounded-xl bg-red px-3 py-2 text-sm font-semibold hover:opacity-90 active:opacity-80"
           onClick={() => {
-            const ok = confirm("Reset ALL local Life Ops data on this device? This cannot be undone.");
-            if (!ok) return;
-            resetAllLocalData();
+            if (confirm("Reset ALL local Life Ops data?")) {
+              resetAllLocalData();
+            }
           }}
         >
           Reset local data
         </button>
-
-        <div className="text-xs opacity-60">
-          Tip: Export a backup before big changes.
-        </div>
       </div>
 
       {/* Sync tools */}
@@ -108,7 +183,7 @@ export default function Settings() {
         ) : (
           <>
             <div className="text-xs opacity-70">
-              Cloud writes may temporarily pause after quota/network errors.
+              Cloud writes may pause after quota/network errors.
             </div>
 
             <div className="rounded-xl bg-card2 p-3 text-xs opacity-80">
@@ -137,60 +212,9 @@ export default function Settings() {
                 Migrate local → Firebase (admin)
               </button>
             )}
-
-            {!isWhitelisted && (
-              <div className="text-xs opacity-60">
-                Migration is restricted to the admin account.
-              </div>
-            )}
           </>
         )}
-      </div>
-
-      {/* About */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
-        <div className="text-sm font-semibold opacity-90">About</div>
-        <div className="text-xs opacity-70">
-          Life Ops is designed for quick daily stability: status, coping, tiny tasks, and gentle planning.
-        </div>
       </div>
     </div>
   );
 }
-
-<div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
-  <div className="text-sm font-semibold opacity-90">Preferences</div>
-
-  <div className="space-y-1">
-    <div className="text-xs font-semibold opacity-70">Today’s guardrail</div>
-    <div className="text-xs opacity-60">One rule for today (shown on Home).</div>
-    <textarea
-      value={prefs?.guardrail ?? ""}
-      onChange={(e) => setPrefs((p) => ({ ...(p ?? {}), guardrail: e.target.value }))}
-      placeholder="e.g., No extra tasks after 7pm."
-      className="w-full min-h-[80px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
-    />
-  </div>
-
-  <div className="space-y-2">
-    <div className="text-xs font-semibold opacity-70">Commute protection checklist</div>
-    <div className="text-xs opacity-60">Shown when Office day + Amber.</div>
-
-    {(prefs?.commuteChecklist ?? []).slice(0, 6).map((v, i) => (
-      <input
-        key={i}
-        value={v}
-        onChange={(e) =>
-          setPrefs((p) => {
-            const list = Array.isArray(p?.commuteChecklist) ? p.commuteChecklist.slice(0, 6) : [];
-            while (list.length < 6) list.push("");
-            list[i] = e.target.value;
-            return { ...(p ?? {}), commuteChecklist: list };
-          })
-        }
-        placeholder={`Item ${i + 1}`}
-        className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
-      />
-    ))}
-  </div>
-</div>
