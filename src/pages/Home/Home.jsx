@@ -1,12 +1,13 @@
-// src/pages/Home/Home.jsx (complete)
+// src/pages/Home/Home.jsx (final)
 // ✅ Persists everything via loadAppData/saveAppData (localStorage)
 // ✅ Hydration guard prevents overwriting saved data on refresh
 // ✅ Saves EVERYTHING that gets loaded (including weeklyChecklist + showWeeklyChecklist)
 // ✅ Upcoming add/edit/delete persists reliably
 // ✅ Firebase sync + migrate button (whitelisted email)
 // ✅ FIXED: prevents cloud read -> state set -> cloud write loop (quota spike)
+// ✅ Perf: avoids recreating big arrays/objects/handlers every render
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import BrainInHandCard from "../../components/BrainInHand/BrainInHandCard";
 import TodayCard from "../../components/Cards/TodayCard";
@@ -74,6 +75,20 @@ function formatLabel(key) {
   });
 }
 
+// -------------------- Stable constants (perf) --------------------
+const DEFAULT_PREFS = {
+  guardrail: "",
+  commuteChecklist: ["Headphones", "Water", "Exit plan", "One calm breath"],
+};
+
+const DEFAULT_QUICKCHECK = { energy: 2, focus: 2, stress: 3 };
+
+const QUICK_ROWS = [
+  { key: "energy", label: "Energy" },
+  { key: "focus", label: "Focus" },
+  { key: "stress", label: "Stress" },
+];
+
 // ISO week key: "YYYY-Www"
 function isoWeekKeyFromDate(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -89,7 +104,6 @@ function isoWeekKeyFromDayKey(dayKey) {
 }
 
 function pickByDay(list, dayKey) {
-  // stable pick so it doesn't change on every render
   let h = 0;
   const s = String(dayKey || "");
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
@@ -97,15 +111,12 @@ function pickByDay(list, dayKey) {
 }
 
 function prevIsoWeekKey(weekKey) {
-  // weekKey like "2026-W05"
   const [yPart, wPart] = String(weekKey).split("-W");
   const y = Number(yPart);
   const w = Number(wPart);
 
   if (!Number.isFinite(y) || !Number.isFinite(w)) return null;
-
   if (w > 1) return `${y}-W${String(w - 1).padStart(2, "0")}`;
-  // week 1 => previous year, week 52/53 (approx)
   return `${y - 1}-W52`;
 }
 
@@ -133,7 +144,7 @@ function promptForStatus(status, dayKey) {
   return pickByDay(list, dayKey);
 }
 
-// -------------------- Small helpers (missing in file) --------------------
+// -------------------- Small helpers --------------------
 function ensureNRows(arr, n) {
   const out = Array.isArray(arr) ? arr.slice(0, n) : [];
   while (out.length < n) out.push("");
@@ -141,12 +152,9 @@ function ensureNRows(arr, n) {
 }
 
 function safeId() {
-  // stable-enough local id for list items
   return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// Coping suggestion based on status + day type.
-// (You can refine this later; this version is designed to NEVER crash.)
 function copingSuggestionFor({ status, dayType }) {
   const s = status || "amber";
   const d = dayType || "";
@@ -169,7 +177,6 @@ function copingSuggestionFor({ status, dayType }) {
     ],
   };
 
-  // tiny dayType tailoring
   const officeExtra = [
     "Commute protection: headphones + exit plan + one calm breath.",
     "Office day: keep it minimal — one essential task only.",
@@ -185,7 +192,6 @@ function copingSuggestionFor({ status, dayType }) {
   if (d === "Groundhop day" && s !== "green") list = [...groundhopExtra, ...list];
   if (d === "Rest day") list = [...restExtra, ...list];
 
-  // stable pick per dayType+status so it doesn’t change constantly
   const key = `${s}|${d}`;
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
@@ -198,22 +204,23 @@ function gentlePrepSuggestion({ status, tomorrowType }) {
 
   if (s === "red") return "Tonight: charge devices, lay out clothes, and pick ONE easy comfort.";
   if (s === "green") return "Set tomorrow up: 1 priority, 1 nice-to-have, and an early wind-down.";
-  // amber default
+
   if (t === "Office day") return "Office tomorrow: pack essentials, choose a calm commute plan, and set 1 small priority.";
   if (t === "Uni day") return "Uni tomorrow: decide the smallest task you’ll do (10 mins) and stop.";
   if (t === "Groundhop day") return "Groundhop tomorrow: plan food/water + one quiet break.";
   return "Tomorrow: choose 1 essential, prep one small thing, and plan one easy comfort.";
 }
 
-
 // -------------------- Home --------------------
 export default function Home() {
   const { user, authLoading } = useAuth();
 
+  const noop = useCallback(() => {}, []);
+
   // prevents “cloud snapshot -> setState -> save -> overwrite cloud” loops
   const applyingRemote = useRef(false);
 
-  // 🔒 NEW: skip exactly one cloud save after applying remote data
+  // skip exactly one cloud save after applying remote data
   const skipNextCloudSave = useRef(false);
 
   // one-time migration: if cloud is empty but local has data, upload it once
@@ -282,13 +289,10 @@ export default function Home() {
     notes: "",
   });
 
-  // ----- Preferences (Section 2) -----
-  const [prefs, setPrefs] = useState({
-    guardrail: "",
-    commuteChecklist: ["Headphones", "Water", "Exit plan", "One calm breath"],
-  });
+  // ----- Preferences -----
+  const [prefs, setPrefs] = useState(DEFAULT_PREFS);
 
-  // ✅ hydration guard
+  // hydration guard
   const [hydrated, setHydrated] = useState(false);
 
   // Swipe support refs
@@ -313,7 +317,6 @@ export default function Home() {
   const currentPlan = supportPlanByStatus[selectedStatus] ?? "";
   const copingSuggestion = copingSuggestionFor({ status: selectedStatus, dayType });
 
-  // ✅ yesterday status MUST exist before we build prepSuggestion
   const yesterdayKey = addDays(selectedKey, -1);
   const yesterdayStatus = statusByDate[yesterdayKey] ?? "amber";
   const redYesterday = yesterdayStatus === "red";
@@ -321,7 +324,6 @@ export default function Home() {
   const tomorrowKey = addDays(selectedKey, 1);
   const tomorrowType = dayTypeByDate[tomorrowKey] ?? defaultDayTypeFor(tomorrowKey);
 
-  // ✅ FIX: no invalid return. Override suggestion if yesterday was Red.
   const prepSuggestion =
     redYesterday && selectedStatus !== "red"
       ? "After a Red day: keep tomorrow gentle — choose 1 tiny essential and plan one easy comfort."
@@ -334,7 +336,7 @@ export default function Home() {
   const dateLabel = formatLabel(selectedKey);
   const last30 = useMemo(() => lastNDaysKeys(30, today), [today]);
 
-  const quickCheck = quickCheckByDate[selectedKey] ?? { energy: 2, focus: 2, stress: 3 };
+  const quickCheck = quickCheckByDate[selectedKey] ?? DEFAULT_QUICKCHECK;
 
   const weekKey = useMemo(() => isoWeekKeyFromDayKey(selectedKey), [selectedKey]);
 
@@ -354,7 +356,6 @@ export default function Home() {
     win: "",
   };
 
-  // ✅ Sunday / review derived values AFTER weeklyReview exists
   const selectedDateObj = keyToDate(selectedKey);
   const isSunday = selectedDateObj.getDay() === 0;
 
@@ -401,23 +402,53 @@ export default function Home() {
     else setSelectedKey((k) => addDays(k, -1));
   }
 
-  // ----- Update helpers -----
-  function setSelectedStatus(nextStatus) {
-    setStatusByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: nextStatus }));
-  }
+  // ----- Navigation handlers (stable) -----
+  const goPrevDay = useCallback(() => setSelectedKey((k) => addDays(k, -1)), []);
+  const goNextDay = useCallback(() => setSelectedKey((k) => addDays(k, 1)), []);
+  const jumpToToday = useCallback(() => setSelectedKey(todayKey()), []);
 
-  function updateSelectedTasks(nextTasks) {
-    setTasksByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: nextTasks }));
-  }
+  // ----- Update helpers (stable) -----
+  const setSelectedStatus = useCallback(
+    (nextStatus) => setStatusByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: nextStatus })),
+    [selectedKey]
+  );
 
-  function updateSelectedAnswer(nextText) {
-    setPromptByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: nextText }));
-  }
+  const updateSelectedTasks = useCallback(
+    (nextTasks) => setTasksByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: nextTasks })),
+    [selectedKey]
+  );
 
-  function markPrepDone() {
-    setPrepDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: true }));
-  }
+  const updateSelectedAnswer = useCallback(
+    (nextText) => setPromptByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: nextText })),
+    [selectedKey]
+  );
 
+  const markPrepDone = useCallback(
+    () => setPrepDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: true })),
+    [selectedKey]
+  );
+
+  const undoPrepDone = useCallback(
+    () => setPrepDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: false })),
+    [selectedKey]
+  );
+
+  const onPickCoping = useCallback(
+    (next) => setCopingPickByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: (next || "").trim() })),
+    [selectedKey]
+  );
+
+  const onCopingDone = useCallback(
+    () => setCopingDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: true })),
+    [selectedKey]
+  );
+
+  const onCopingUndo = useCallback(
+    () => setCopingDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: false })),
+    [selectedKey]
+  );
+
+  // ----- Weekly helpers -----
   function setWeeklyRow(kind, idx, value) {
     setWeeklyByWeekKey((prev) => {
       const safePrev = prev ?? {};
@@ -490,17 +521,16 @@ export default function Home() {
     weeklyPriorities.map((x) => (x || "").trim()).filter(Boolean).length > 0 ||
     weeklyNice.map((x) => (x || "").trim()).filter(Boolean).length > 0;
 
-  // “One tweak” becomes next week’s first priority:
   const tweakFromPrev = (weeklyReviewByWeekKey?.[prevWeekKey]?.change ?? "").trim();
 
-  // Upcoming editor actions
-  function openAddUpcoming() {
+  // ----- Upcoming editor actions -----
+  const openAddUpcoming = useCallback(() => {
     setUpcomingEditId(null);
     setUpcomingDraft({ type: "match", title: "", date: "", location: "", notes: "" });
     setUpcomingEditorOpen(true);
-  }
+  }, []);
 
-  function openEditUpcoming(item) {
+  const openEditUpcoming = useCallback((item) => {
     setUpcomingEditId(item?.id ?? null);
     setUpcomingDraft({
       type: item?.type ?? "other",
@@ -510,9 +540,9 @@ export default function Home() {
       notes: item?.notes ?? "",
     });
     setUpcomingEditorOpen(true);
-  }
+  }, []);
 
-  function saveUpcomingDraft() {
+  const saveUpcomingDraft = useCallback(() => {
     const cleaned = {
       type: (upcomingDraft.type || "other").trim(),
       title: (upcomingDraft.title || "").trim(),
@@ -525,21 +555,19 @@ export default function Home() {
 
     setUpcomingItems((prev) => {
       const list = Array.isArray(prev) ? prev : [];
-
       if (upcomingEditId) {
         return list.map((x) => (x.id === upcomingEditId ? { ...x, ...cleaned } : x));
       }
-
       return [{ id: safeId(), ...cleaned, createdAt: Date.now() }, ...list];
     });
 
     setUpcomingEditorOpen(false);
     setUpcomingEditId(null);
-  }
+  }, [upcomingDraft, upcomingEditId]);
 
-  function deleteUpcoming(id) {
+  const deleteUpcoming = useCallback((id) => {
     setUpcomingItems((prev) => (Array.isArray(prev) ? prev.filter((x) => x.id !== id) : []));
-  }
+  }, []);
 
   // ----- Load & Sync -----
   useEffect(() => {
@@ -599,13 +627,11 @@ export default function Home() {
         await migrateLocalToCloud(user.uid, local);
       }
 
-      // If we are about to apply cloud state, skip next cloud save
       if (cloud) skipNextCloudSave.current = true;
 
       applyingRemote.current = true;
       applySaved(cloud || local);
 
-      // Keep remote flag through the next effect cycle reliably
       queueMicrotask(() => {
         applyingRemote.current = false;
       });
@@ -620,7 +646,6 @@ export default function Home() {
         if (json === lastCloudJSON.current) return;
         lastCloudJSON.current = json;
 
-        // Snapshot apply -> skip next cloud save
         skipNextCloudSave.current = true;
 
         applyingRemote.current = true;
@@ -664,14 +689,11 @@ export default function Home() {
       upcomingItems,
     };
 
-    // Always save locally
     saveAppData(payload);
 
-    // Cloud save only if signed in and not applying remote
     if (!user) return;
     if (applyingRemote.current) return;
 
-    // 🔒 Prevent “cloud apply -> save back” loop
     if (skipNextCloudSave.current) {
       skipNextCloudSave.current = false;
       return;
@@ -716,7 +738,7 @@ export default function Home() {
         day: selectedKey,
 
         trafficLight: traffic,
-        status: selectedStatus, // ✅ keep app status ("amber"/"green"/"red")
+        status: selectedStatus,
 
         copingMethod: (pickedCoping || "").trim(),
         oneQuestion: (selectedAnswer || "").trim(),
@@ -770,13 +792,13 @@ export default function Home() {
     quickCheck,
   ]);
 
-  // Auto-reduce on Red, return to normal otherwise (per selected day)
+  // Auto-reduce on Red, return to normal otherwise
   useEffect(() => {
     if (selectedStatus === "red") setUiMode("reduced");
     else setUiMode("normal");
   }, [selectedStatus]);
 
-  // Auto-open SupportSheet on Red (once per day, only for today/future days)
+  // Auto-open SupportSheet on Red (once per day)
   useEffect(() => {
     if (selectedStatus !== "red") return;
     if (!canEdit) return;
@@ -834,7 +856,7 @@ export default function Home() {
           >
             <button
               className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-              onClick={() => setSelectedKey((k) => addDays(k, -1))}
+              onClick={goPrevDay}
             >
               ←
             </button>
@@ -846,7 +868,7 @@ export default function Home() {
 
             <button
               className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-              onClick={() => setSelectedKey((k) => addDays(k, 1))}
+              onClick={goNextDay}
             >
               →
             </button>
@@ -862,7 +884,7 @@ export default function Home() {
           {selectedKey !== today && (
             <button
               className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-              onClick={() => setSelectedKey(today)}
+              onClick={jumpToToday}
             >
               Jump to today
             </button>
@@ -884,7 +906,7 @@ export default function Home() {
       <CopingCard
         status={selectedStatus}
         canEdit={canEdit}
-        onPrimaryAction={() => setSupportOpen(true)}
+        onPrimaryAction={canEdit ? () => setSupportOpen(true) : noop}
         onReduceScreen={() => setUiMode("reduced")}
       />
 
@@ -894,15 +916,9 @@ export default function Home() {
         picked={pickedCoping}
         done={copingDone}
         canEdit={canEdit}
-        onPick={(next) => {
-          setCopingPickByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: (next || "").trim() }));
-        }}
-        onDone={() => {
-          setCopingDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: true }));
-        }}
-        onUndo={() => {
-          setCopingDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: false }));
-        }}
+        onPick={canEdit ? onPickCoping : noop}
+        onDone={canEdit ? onCopingDone : noop}
+        onUndo={canEdit ? onCopingUndo : noop}
       />
 
       {/* Brain in Hand */}
@@ -969,20 +985,18 @@ export default function Home() {
       <PromptCard
         prompt={dailyPrompt}
         answer={selectedAnswer}
-        onChangeAnswer={canEdit ? updateSelectedAnswer : () => {}}
+        onChangeAnswer={canEdit ? updateSelectedAnswer : noop}
       />
 
       <GentlePrepCard
         suggestion={prepSuggestion}
         canEdit={canEdit}
         done={prepDone}
-        onDone={markPrepDone}
-        onUndo={() => {
-          setPrepDoneByDate((prev) => ({ ...(prev ?? {}), [selectedKey]: false }));
-        }}
+        onDone={canEdit ? markPrepDone : noop}
+        onUndo={canEdit ? undoPrepDone : noop}
       />
 
-      {/* ✅ Sunday check (MOVED INSIDE JSX RETURN) */}
+      {/* Sunday check */}
       {isSunday && canEdit && reviewEmpty && (
         <div className="rounded-2xl border border-white/10 bg-card p-4">
           <div className="text-sm font-semibold opacity-90">Sunday check</div>
@@ -1221,7 +1235,7 @@ export default function Home() {
           <TodayCard
             dateKey={selectedKey}
             tasks={selectedTasks}
-            onChangeTasks={canEdit ? updateSelectedTasks : () => {}}
+            onChangeTasks={canEdit ? updateSelectedTasks : noop}
             readOnly={!canEdit}
           />
 
@@ -1233,11 +1247,7 @@ export default function Home() {
             </div>
 
             <div className="mt-3 space-y-4">
-              {[
-                { key: "energy", label: "Energy" },
-                { key: "focus", label: "Focus" },
-                { key: "stress", label: "Stress" },
-              ].map((row) => {
+              {QUICK_ROWS.map((row) => {
                 const value = quickCheck?.[row.key] ?? 2;
 
                 return (
@@ -1258,7 +1268,7 @@ export default function Home() {
                         setQuickCheckByDate((prev) => ({
                           ...(prev ?? {}),
                           [selectedKey]: {
-                            ...(prev?.[selectedKey] ?? { energy: 2, focus: 2, stress: 3 }),
+                            ...(prev?.[selectedKey] ?? DEFAULT_QUICKCHECK),
                             [row.key]: nextVal,
                           },
                         }));
@@ -1478,7 +1488,6 @@ export default function Home() {
                         .map(([k]) => k)
                         .slice(0, 6);
 
-                      // insert tweak first if present
                       const nextPriorities = [...(tweakFromPrev ? [tweakFromPrev] : []), ...kept]
                         .filter(Boolean)
                         .slice(0, 6);
