@@ -1,7 +1,12 @@
 // src/pages/History/History.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getDailyHistory } from "../../data/storage/historyDaily";
 
+import Card from "../../components/ui/Card";
+import Button from "../../components/ui/Button";
+import { Input } from "../../components/ui/Field";
+
+// --------- helpers ----------
 function keyToDate(key) {
   const [y, m, d] = String(key).split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1);
@@ -95,6 +100,7 @@ function avgQuick(items, key) {
   return Math.round((sum / nums.length) * 10) / 10;
 }
 
+// --------- page ----------
 export default function History() {
   const [items, setItems] = useState([]);
   const [query, setQuery] = useState("");
@@ -106,24 +112,29 @@ export default function History() {
   useEffect(() => {
     const load = () => setItems(getDailyHistory() ?? []);
     load();
+
     const onStorage = (e) => {
       if (e.key && e.key.includes("lifeops:history:daily")) load();
     };
+
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
+  const rangeItems = useMemo(() => {
+    let list = Array.isArray(items) ? items.slice() : [];
+    list.sort((a, b) => String(b.day).localeCompare(String(a.day)));
+    if (range && range > 0) list = list.slice(0, range);
+    return list;
+  }, [items, range]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let list = Array.isArray(items) ? items.slice() : [];
-
-    // newest first
-    list.sort((a, b) => String(b.day).localeCompare(String(a.day)));
-
-    if (range && range > 0) list = list.slice(0, range);
+    let list = rangeItems.slice();
 
     list = list.filter((x) => {
       const t = String(x?.trafficLight || "").toLowerCase();
+
       if (trafficFilter !== "all") {
         // accept either yellow or amber for the filter
         if (trafficFilter === "yellow") {
@@ -150,26 +161,13 @@ export default function History() {
     });
 
     return list;
-  }, [items, query, trafficFilter, range]);
-
-  // Summary (uses currently visible range, before search filter)
-  const rangeItems = useMemo(() => {
-    let list = Array.isArray(items) ? items.slice() : [];
-    list.sort((a, b) => String(b.day).localeCompare(String(a.day)));
-    if (range && range > 0) list = list.slice(0, range);
-    return list;
-  }, [items, range]);
+  }, [rangeItems, query, trafficFilter]);
 
   const summary = useMemo(() => {
-    const mostTraffic = mostCommon(rangeItems, (x) => (x?.trafficLight === "amber" ? "yellow" : x?.trafficLight));
+    const mostTraffic = mostCommon(rangeItems, (x) =>
+      x?.trafficLight === "amber" ? "yellow" : x?.trafficLight
+    );
     const bestCoping = mostCommon(rangeItems, (x) => x?.copingMethod);
-    const drained = mostCommon(rangeItems, (x) => {
-      // lightweight heuristic: pull from oneQuestion if user writes “drained by…”
-      const s = (x?.oneQuestion ?? "").toLowerCase();
-      // if you later log "drained" explicitly, we’ll swap this.
-      if (s.includes("drain")) return x.oneQuestion;
-      return "";
-    });
 
     const avgE7 = avgQuick(rangeItems.slice(0, 7), "energy");
     const avgF7 = avgQuick(rangeItems.slice(0, 7), "focus");
@@ -179,11 +177,7 @@ export default function History() {
     const avgF30 = avgQuick(rangeItems.slice(0, 30), "focus");
     const avgS30 = avgQuick(rangeItems.slice(0, 30), "stress");
 
-    // What helps on red days
-    const red = rangeItems.filter((x) => {
-      const t = String(x?.trafficLight || "").toLowerCase();
-      return t === "red";
-    });
+    const red = rangeItems.filter((x) => String(x?.trafficLight || "").toLowerCase() === "red");
 
     const redHelps = (() => {
       const map = new Map();
@@ -199,7 +193,6 @@ export default function History() {
     return {
       mostTraffic,
       bestCoping,
-      drained,
       avgE7,
       avgF7,
       avgS7,
@@ -210,6 +203,27 @@ export default function History() {
     };
   }, [rangeItems]);
 
+  const onExportCSV = useCallback(() => {
+    const csv = toCSV(rangeItems);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadText(`life-ops-history-${stamp}.csv`, csv);
+  }, [rangeItems]);
+
+  const toggleExpanded = useCallback((day) => {
+    setExpandedDay((cur) => (cur === day ? null : day));
+  }, []);
+
+  const rangeButtons = useMemo(
+    () => [
+      { label: "7", val: 7 },
+      { label: "30", val: 30 },
+      { label: "90", val: 90 },
+      { label: "120", val: 120 },
+      { label: "All", val: 0 },
+    ],
+    []
+  );
+
   return (
     <div className="max-w-md p-4 space-y-4">
       <div>
@@ -218,139 +232,117 @@ export default function History() {
       </div>
 
       {/* Controls */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-3">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search (e.g. 'office', 'walk', 'red')"
-          className="w-full rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
-        />
+      <Card title="Controls">
+        <div className="space-y-3">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search (e.g. 'office', 'walk', 'red')"
+            aria-label="Search history"
+          />
 
-        <div className="flex flex-wrap gap-2">
-          {[
-            { label: "7", val: 7 },
-            { label: "30", val: 30 },
-            { label: "90", val: 90 },
-            { label: "120", val: 120 },
-            { label: "All", val: 0 },
-          ].map((b) => (
-            <button
-              key={b.label}
-              className={`rounded-xl px-3 py-2 text-sm hover:opacity-90 active:opacity-80 ${
-                range === b.val ? "bg-purple font-semibold" : "bg-card2"
-              }`}
-              onClick={() => setRange(b.val)}
-            >
-              {b.label} days
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-xs opacity-80 flex items-center gap-2">
-            Traffic:
-            <select
-              value={trafficFilter}
-              onChange={(e) => setTrafficFilter(e.target.value)}
-              className="rounded-xl bg-card2 px-3 py-2 text-sm outline-none"
-            >
-              <option value="all">All</option>
-              <option value="green">Green</option>
-              <option value="yellow">Yellow</option>
-              <option value="red">Red</option>
-            </select>
-          </label>
-
-          <button
-            className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
-            onClick={() => {
-              const csv = toCSV(rangeItems);
-              const stamp = new Date().toISOString().slice(0, 10);
-              downloadText(`life-ops-history-${stamp}.csv`, csv);
-            }}
-          >
-            Export CSV
-          </button>
-        </div>
-
-        <div className="text-xs opacity-60">Showing: {filtered.length} entries</div>
-      </div>
-
-      {/* Weekly summary */}
-      <div className="rounded-2xl border border-white/10 bg-card p-4 space-y-2">
-        <div className="text-sm font-semibold opacity-90">Summary</div>
-
-        <div className="flex items-center justify-between text-sm">
-          <span className="opacity-80">Most common traffic light</span>
-          <span className={`rounded-full border px-3 py-1 text-xs ${pillClass(summary.mostTraffic?.value)}`}>
-            {summary.mostTraffic?.value?.toUpperCase?.() ?? "—"}
-          </span>
-        </div>
-
-        <div className="flex items-center justify-between text-sm">
-          <span className="opacity-80">Best coping (most used)</span>
-          <span className="text-sm font-semibold">{summary.bestCoping?.value ?? "—"}</span>
-        </div>
-
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <div className="rounded-xl bg-card2 p-3">
-            <div className="text-xs opacity-70">Avg Energy</div>
-            <div className="text-lg font-semibold">{summary.avgE7 ?? "—"}</div>
-            <div className="text-[11px] opacity-60">last 7</div>
+          <div className="flex flex-wrap gap-2">
+            {rangeButtons.map((b) => (
+              <Button
+                key={b.label}
+                variant={range === b.val ? "purple" : "card"}
+                onClick={() => setRange(b.val)}
+              >
+                {b.label} days
+              </Button>
+            ))}
           </div>
-          <div className="rounded-xl bg-card2 p-3">
-            <div className="text-xs opacity-70">Avg Focus</div>
-            <div className="text-lg font-semibold">{summary.avgF7 ?? "—"}</div>
-            <div className="text-[11px] opacity-60">last 7</div>
-          </div>
-          <div className="rounded-xl bg-card2 p-3">
-            <div className="text-xs opacity-70">Avg Stress</div>
-            <div className="text-lg font-semibold">{summary.avgS7 ?? "—"}</div>
-            <div className="text-[11px] opacity-60">last 7</div>
-          </div>
-        </div>
 
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <div className="rounded-xl bg-card2 p-3">
-            <div className="text-xs opacity-70">Avg Energy</div>
-            <div className="text-lg font-semibold">{summary.avgE30 ?? "—"}</div>
-            <div className="text-[11px] opacity-60">last 30</div>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-xs opacity-80 flex items-center gap-2">
+              Traffic:
+              <select
+                value={trafficFilter}
+                onChange={(e) => setTrafficFilter(e.target.value)}
+                className="min-h-[44px] rounded-xl bg-card2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple/60"
+                aria-label="Traffic filter"
+              >
+                <option value="all">All</option>
+                <option value="green">Green</option>
+                <option value="yellow">Yellow</option>
+                <option value="red">Red</option>
+              </select>
+            </label>
+
+            <Button onClick={onExportCSV}>Export CSV</Button>
           </div>
-          <div className="rounded-xl bg-card2 p-3">
-            <div className="text-xs opacity-70">Avg Focus</div>
-            <div className="text-lg font-semibold">{summary.avgF30 ?? "—"}</div>
-            <div className="text-[11px] opacity-60">last 30</div>
+
+          <div className="text-xs opacity-60">Showing: {filtered.length} entries</div>
+        </div>
+      </Card>
+
+      {/* Summary */}
+      <Card title="Summary">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="opacity-80">Most common traffic light</span>
+            <span className={`rounded-full border px-3 py-1 text-xs ${pillClass(summary.mostTraffic?.value)}`}>
+              {summary.mostTraffic?.value?.toUpperCase?.() ?? "—"}
+            </span>
           </div>
-          <div className="rounded-xl bg-card2 p-3">
-            <div className="text-xs opacity-70">Avg Stress</div>
-            <div className="text-lg font-semibold">{summary.avgS30 ?? "—"}</div>
-            <div className="text-[11px] opacity-60">last 30</div>
+
+          <div className="flex items-center justify-between text-sm">
+            <span className="opacity-80">Best coping (most used)</span>
+            <span className="text-sm font-semibold">{summary.bestCoping?.value ?? "—"}</span>
+          </div>
+
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {[
+              { label: "Avg Energy", v: summary.avgE7, sub: "last 7" },
+              { label: "Avg Focus", v: summary.avgF7, sub: "last 7" },
+              { label: "Avg Stress", v: summary.avgS7, sub: "last 7" },
+            ].map((b) => (
+              <div key={b.label} className="rounded-xl bg-card2 p-3">
+                <div className="text-xs opacity-70">{b.label}</div>
+                <div className="text-lg font-semibold">{b.v ?? "—"}</div>
+                <div className="text-[11px] opacity-60">{b.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {[
+              { label: "Avg Energy", v: summary.avgE30, sub: "last 30" },
+              { label: "Avg Focus", v: summary.avgF30, sub: "last 30" },
+              { label: "Avg Stress", v: summary.avgS30, sub: "last 30" },
+            ].map((b) => (
+              <div key={b.label + b.sub} className="rounded-xl bg-card2 p-3">
+                <div className="text-xs opacity-70">{b.label}</div>
+                <div className="text-lg font-semibold">{b.v ?? "—"}</div>
+                <div className="text-[11px] opacity-60">{b.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3">
+            <div className="text-xs font-semibold opacity-70">What helps on Red days</div>
+            {summary.redHelps.length ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {summary.redHelps.map((x) => (
+                  <span key={x.name} className="rounded-full bg-card2 px-3 py-1 text-xs">
+                    {x.name} <span className="opacity-60">×{x.count}</span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm opacity-70 mt-1">No Red-day coping logged yet.</div>
+            )}
           </div>
         </div>
-
-        <div className="mt-3">
-          <div className="text-xs font-semibold opacity-70">What helps on Red days</div>
-          {summary.redHelps.length ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {summary.redHelps.map((x) => (
-                <span key={x.name} className="rounded-full bg-card2 px-3 py-1 text-xs">
-                  {x.name} <span className="opacity-60">×{x.count}</span>
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div className="text-sm opacity-70 mt-1">No Red-day coping logged yet.</div>
-          )}
-        </div>
-      </div>
+      </Card>
 
       {/* Timeline */}
       {filtered.length === 0 ? (
-        <div className="rounded-2xl border border-white/10 bg-card p-4">
+        <Card title="No history yet">
           <div className="text-sm opacity-80">
-            No history yet. Go to Home, make a small change (status / note), wait ~1 second, then come back.
+            Go to Home, make a small change (status / note), wait ~1 second, then come back.
           </div>
-        </div>
+        </Card>
       ) : (
         <div className="space-y-2">
           {filtered.map((x) => {
@@ -358,20 +350,23 @@ export default function History() {
             const traffic = (x.trafficLight === "amber" ? "yellow" : x.trafficLight) || "—";
 
             return (
-              <div key={x.day} className="rounded-2xl border border-white/10 bg-card p-4">
+              <Card key={x.day} className="p-0">
                 <button
-                  className="w-full text-left"
-                  onClick={() => setExpandedDay(open ? null : x.day)}
+                  className="w-full text-left p-4 focus:outline-none focus:ring-2 focus:ring-purple/60 rounded-2xl"
+                  onClick={() => toggleExpanded(x.day)}
+                  aria-expanded={open}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <div className="text-sm font-semibold">
                         {formatLabel(x.day)} <span className="opacity-60 text-xs">({x.day})</span>
                       </div>
+
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <span className={`rounded-full border px-3 py-1 text-xs ${pillClass(traffic)}`}>
                           {String(traffic).toUpperCase()}
                         </span>
+
                         <span className="text-xs opacity-70">
                           Energy: <b>{x?.quickCheck?.energy ?? "—"}</b>
                         </span>
@@ -381,6 +376,7 @@ export default function History() {
                         <span className="text-xs opacity-70">
                           Stress: <b>{x?.quickCheck?.stress ?? "—"}</b>
                         </span>
+
                         {typeof x.todoTodayCount === "number" && (
                           <span className="text-xs opacity-70">
                             Today tasks: <b>{x.todoTodayCount}</b>
@@ -399,14 +395,14 @@ export default function History() {
                       </div>
                     </div>
 
-                    <div className="rounded-xl bg-card2 px-3 py-2 text-sm">
+                    <div className={`min-h-[44px] flex items-center rounded-xl px-3 text-sm ${open ? "bg-purple/25" : "bg-card2"}`}>
                       {open ? "Hide" : "Details"}
                     </div>
                   </div>
                 </button>
 
                 {open ? (
-                  <div className="mt-3 space-y-2 text-sm opacity-90">
+                  <div className="px-4 pb-4 space-y-3 text-sm opacity-90">
                     <div>
                       <div className="text-xs font-semibold opacity-70">One question</div>
                       <div className="whitespace-pre-wrap">{x.oneQuestion || "—"}</div>
@@ -431,11 +427,15 @@ export default function History() {
                     </div>
                   </div>
                 ) : null}
-              </div>
+              </Card>
             );
           })}
         </div>
       )}
+
+      <Button variant="ghost" onClick={() => window.history.back()}>
+        ← Back
+      </Button>
     </div>
   );
 }
