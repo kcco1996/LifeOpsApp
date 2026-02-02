@@ -96,6 +96,20 @@ function pickByDay(list, dayKey) {
   return list[h % list.length];
 }
 
+function prevIsoWeekKey(weekKey) {
+  // weekKey like "2026-W05"
+  const [yPart, wPart] = String(weekKey).split("-W");
+  const y = Number(yPart);
+  const w = Number(wPart);
+
+  if (!Number.isFinite(y) || !Number.isFinite(w)) return null;
+
+  if (w > 1) return `${y}-W${String(w - 1).padStart(2, "0")}`;
+  // week 1 => previous year, week 52/53 (approx)
+  return `${y - 1}-W52`;
+}
+
+
 const PROMPTS = {
   green: [
     "What’s one thing you want to keep the same today?",
@@ -159,11 +173,22 @@ export default function Home() {
   // ----- Per-status plans -----
   const [supportPlanByStatus, setSupportPlanByStatus] = useState({ green: "", amber: "", red: "" });
 
+  const [carryOpen, setCarryOpen] = useState(false);
+const [carryPick, setCarryPick] = useState({});
+
   // ----- Weekly storage -----
   const [weeklyByWeekKey, setWeeklyByWeekKey] = useState({});
   const [weeklyChecklistByWeekKey, setWeeklyChecklistByWeekKey] = useState({});
   const [weeklyReviewByWeekKey, setWeeklyReviewByWeekKey] = useState({});
   const [showWeeklyChecklist, setShowWeeklyChecklist] = useState(true);
+
+  const selectedDateObj = keyToDate(selectedKey);
+const isSunday = selectedDateObj.getDay() === 0;
+const reviewEmpty =
+  !weeklyReview.wentWell.trim() &&
+  !weeklyReview.drained.trim() &&
+  !weeklyReview.change.trim() &&
+  !weeklyReview.win.trim();
 
   // ----- Next trip / match -----
   const [nextTrip, setNextTrip] = useState({ title: "", date: "", location: "", notes: "" });
@@ -367,6 +392,14 @@ const redYesterday = yesterdayStatus === "red";
     });
   }
 
+  {isSunday && canEdit && reviewEmpty && (
+  <div className="rounded-2xl border border-white/10 bg-card p-4">
+    <div className="text-sm font-semibold opacity-90">Sunday check</div>
+    <div className="text-sm opacity-80 mt-1">2-min weekly review?</div>
+    <div className="text-xs opacity-60">Tiny is fine. One sentence each.</div>
+  </div>
+)}
+
   function setWeeklyReviewField(field, value) {
     setWeeklyReviewByWeekKey((prev) => {
       const safePrev = prev ?? {};
@@ -374,6 +407,18 @@ const redYesterday = yesterdayStatus === "red";
       return { ...safePrev, [weekKey]: { ...cur, [field]: value } };
     });
   }
+
+  const prevWeekKey = useMemo(() => prevIsoWeekKey(weekKey), [weekKey]);
+const prevBlock = weeklyByWeekKey?.[prevWeekKey] ?? { priorities: [], nice: [] };
+const prevPriorities = ensureNRows(prevBlock.priorities, 6).map((x) => (x || "").trim()).filter(Boolean);
+const prevNice = ensureNRows(prevBlock.nice, 6).map((x) => (x || "").trim()).filter(Boolean);
+
+const currentHasAny =
+  weeklyPriorities.map((x) => (x || "").trim()).filter(Boolean).length > 0 ||
+  weeklyNice.map((x) => (x || "").trim()).filter(Boolean).length > 0;
+
+// “One tweak” becomes next week’s first priority:
+const tweakFromPrev = (weeklyReviewByWeekKey?.[prevWeekKey]?.change ?? "").trim();
 
   // Upcoming editor actions
   function openAddUpcoming() {
@@ -873,6 +918,21 @@ useEffect(() => {
           <div className="text-xs opacity-60">{weekKey}</div>
         </div>
 
+        {canEdit && !currentHasAny && (prevPriorities.length || prevNice.length || tweakFromPrev) && (
+  <button
+    className="w-full rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90 active:opacity-80"
+    onClick={() => {
+      const initial = {};
+      [...prevPriorities, ...prevNice].forEach((x) => (initial[x] = true));
+      setCarryPick(initial);
+      setCarryOpen(true);
+    }}
+  >
+    Carry over last week (keep/drop)
+  </button>
+)}
+
+
         <div className="mt-3 space-y-2">
           <div className="text-xs font-semibold opacity-70">Top priorities</div>
 
@@ -1298,6 +1358,76 @@ useEffect(() => {
                 Close
               </button>
             </div>
+
+            {carryOpen && (
+  <div className="fixed inset-0 z-50" onClick={() => setCarryOpen(false)}>
+    <div className="absolute inset-0 bg-black/60" />
+    <div
+      className="absolute left-0 right-0 bottom-0 rounded-t-2xl border border-white/10 bg-bg p-4"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold opacity-90">Carry over</div>
+        <button
+          className="rounded-xl bg-card2 px-3 py-2 text-sm hover:opacity-90"
+          onClick={() => setCarryOpen(false)}
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mt-3 text-xs opacity-60">
+        Tick what to keep. Your previous “one tweak” will be added as Priority #1 automatically (if you apply).
+      </div>
+
+      <div className="mt-3 space-y-2 max-h-[50vh] overflow-auto">
+        {[...new Set([...prevPriorities, ...prevNice])].map((item) => (
+          <label key={item} className="flex items-center gap-2 rounded-xl bg-card2 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={!!carryPick[item]}
+              onChange={() => setCarryPick((p) => ({ ...(p ?? {}), [item]: !p?.[item] }))}
+              className="h-4 w-4"
+            />
+            <span className="text-sm">{item}</span>
+          </label>
+        ))}
+      </div>
+
+      <button
+        className="w-full mt-3 rounded-xl bg-purple px-3 py-2 text-sm font-semibold hover:opacity-90 active:opacity-80"
+        onClick={() => {
+          const kept = Object.entries(carryPick)
+            .filter(([, v]) => !!v)
+            .map(([k]) => k)
+            .slice(0, 6);
+
+          // insert tweak first if present
+          const nextPriorities = [
+            ...(tweakFromPrev ? [tweakFromPrev] : []),
+            ...kept,
+          ].filter(Boolean).slice(0, 6);
+
+          setWeeklyByWeekKey((prev) => {
+            const safePrev = prev ?? {};
+            return {
+              ...safePrev,
+              [weekKey]: {
+                priorities: ensureNRows(nextPriorities, 6),
+                nice: ensureNRows([], 6),
+              },
+            };
+          });
+
+          setCarryOpen(false);
+        }}
+      >
+        Apply carry-over
+      </button>
+    </div>
+  </div>
+)}
+
 
             <div className="mt-3 max-h-[60vh] overflow-auto space-y-1">
               {last30.map((k) => {
