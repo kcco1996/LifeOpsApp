@@ -147,6 +147,11 @@ export default function Home() {
   // one-time migration: if cloud is empty but local has data, upload it once
   const migratedOnce = useRef(false);
 
+    // ----- UI state -----
+  const [uiMode, setUiMode] = useState("normal");
+  const [selectedKey, setSelectedKey] = useState(todayKey());
+  const today = todayKey();
+
   function defaultDayTypeFor(key) {
     const d = keyToDate(key);
     const dow = d.getDay(); // 0 Sun ... 6 Sat
@@ -196,11 +201,6 @@ const reviewEmpty =
 
   // ----- Upcoming (global list) -----
   const [upcomingItems, setUpcomingItems] = useState([]);
-
-  // ----- UI state -----
-  const [uiMode, setUiMode] = useState("normal");
-  const [selectedKey, setSelectedKey] = useState(todayKey());
-  const today = todayKey();
 
   const [supportOpen, setSupportOpen] = useState(false);
   const [planEditorOpen, setPlanEditorOpen] = useState(false);
